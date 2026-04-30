@@ -1,4 +1,4 @@
-import { Document, Page, View, Text, StyleSheet } from "@react-pdf/renderer"
+import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer"
 
 const ACCENT = "#1d4ed8"
 const MUTED = "#6b7280"
@@ -109,7 +109,7 @@ export function InvoiceTemplate({
             <Text style={s.invoiceNum}>{invoiceNumber}</Text>
           </View>
           <View style={s.right}>
-            <Text style={s.companyName}>{companyName}</Text>
+            <Image src="/logo.svg" style={{ width: 120, height: 36, objectFit: "contain", marginBottom: 4 }} />
             <Text style={s.companyContact}>{companyContact}</Text>
           </View>
         </View>
