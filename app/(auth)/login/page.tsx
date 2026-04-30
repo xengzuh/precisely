@@ -1,9 +1,10 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { getSupabaseClient } from "@/lib/supabase/client"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
@@ -37,8 +38,8 @@ export default function LoginPage() {
 
   return (
     <Card className="w-full max-w-sm">
-      <CardHeader>
-        <CardTitle className="text-center text-lg">ERP System</CardTitle>
+      <CardHeader className="flex items-center justify-center pb-2">
+        <Image src="/logo.svg" alt="ERP System" width={160} height={48} className="object-contain" />
       </CardHeader>
       <CardContent>
         <div className="grid gap-4">

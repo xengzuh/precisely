@@ -1,10 +1,10 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
-  LayoutDashboard,
   Package,
   ShoppingCart,
   Settings,
@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  LayoutDashboard,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getSupabaseClient } from "@/lib/supabase/client"
@@ -56,11 +57,9 @@ export default function DashboardLayout({
         {/* Brand */}
         <div className="flex h-14 items-center border-b px-3 shrink-0">
           {collapsed ? (
-            <LayoutDashboard className="size-5 shrink-0 mx-auto text-sidebar-primary" />
+            <Image src="/logo.svg" alt="Logo" width={32} height={32} className="mx-auto object-contain" />
           ) : (
-            <span className="font-semibold text-sm truncate text-sidebar-foreground">
-              ERP System
-            </span>
+            <Image src="/logo.svg" alt="ERP System" width={140} height={36} className="object-contain" />
           )}
         </div>
 
