@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server"
 import { renderToBuffer } from "@react-pdf/renderer"
 import { format, parseISO } from "date-fns"
-import { getSupabase } from "@/lib/supabase/server"
+import { getUserContext } from "@/lib/erp/actions/context"
 import { PurchaseOrdersReportTemplate } from "@/components/pdf/PurchaseOrdersReportTemplate"
 import type { PORow } from "@/components/pdf/PurchaseOrdersReportTemplate"
 
@@ -18,39 +18,33 @@ export async function GET(request: NextRequest) {
       return new Response("startDate and endDate query params are required", { status: 400 })
     }
 
-    const supabase = await getSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return new Response("Unauthorized", { status: 401 })
+    const ctx = await getUserContext()
 
-    const { data, error } = await supabase
-      .from("purchase_orders")
-      .select("quantity, unit_cost, total_cost, status, created_at, suppliers(name), products(name)")
-      .gte("created_at", `${startDate}T00:00:00`)
-      .lte("created_at", `${endDate}T23:59:59`)
-      .order("created_at", { ascending: false })
+    // Quantity and cost moved onto the line items, so the report is now one
+    // row per line rather than one per order.
+    const { data, error } = await ctx.db
+      .from("purchase_order_lines")
+      .select(
+        "qty, uom, unit_cost, line_total, products(name), purchase_orders(order_no, status, order_date, suppliers(name))"
+      )
+      .eq("org_id", ctx.orgId)
+      .gte("purchase_orders.order_date", startDate)
+      .lte("purchase_orders.order_date", endDate)
 
     if (error) return new Response(error.message, { status: 500 })
 
-    type RawOrder = {
-      quantity: number
-      unit_cost: number
-      total_cost: number
-      status: string
-      created_at: string
-      suppliers: { name: string } | null
-      products: { name: string } | null
-    }
-    const raw = (data ?? []) as unknown as RawOrder[]
-
-    const orders: PORow[] = raw.map((o) => ({
-      date: format(parseISO(o.created_at), "dd MMM yy"),
-      supplierName: o.suppliers?.name ?? "—",
-      productName: o.products?.name ?? "—",
-      quantity: o.quantity,
-      unitCost: Number(o.unit_cost),
-      totalCost: Number(o.total_cost),
-      status: o.status,
-    }))
+    const orders: PORow[] = (data ?? [])
+      .filter((l) => l.purchase_orders !== null)
+      .map((l) => ({
+        date: format(parseISO(l.purchase_orders!.order_date), "dd MMM yy"),
+        supplierName: l.purchase_orders!.suppliers?.name ?? "—",
+        productName: l.products?.name ?? "—",
+        quantity: l.qty,
+        unitCost: Number(l.unit_cost),
+        totalCost: Number(l.line_total),
+        status: l.purchase_orders!.status,
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date))
 
     const period = `${format(parseISO(startDate), "dd MMM yyyy")} – ${format(parseISO(endDate), "dd MMM yyyy")}`
     const generatedAt = format(new Date(), "dd MMM yyyy, HH:mm")

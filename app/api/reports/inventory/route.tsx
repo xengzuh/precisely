@@ -1,33 +1,25 @@
 import { renderToBuffer } from "@react-pdf/renderer"
 import { format } from "date-fns"
-import { getSupabase } from "@/lib/supabase/server"
 import { InventoryReportTemplate } from "@/components/pdf/InventoryReportTemplate"
+import { getUserContext } from "@/lib/erp/actions/context"
+import { listProducts } from "@/lib/erp/queries"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET() {
   try {
-    const supabase = await getSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return new Response("Unauthorized", { status: 401 })
-
-    const { data, error } = await supabase
-      .from("products")
-      .select("name, sku, stock, price")
-      .order("name")
-
-    if (error) return new Response(error.message, { status: 500 })
-
-    type RawProduct = { name: string; sku: string; stock: number; price: number }
-    const raw = (data ?? []) as RawProduct[]
+    const ctx = await getUserContext()
+    const raw = await listProducts(ctx)
 
     const products = raw.map((p) => ({
       name: p.name,
       sku: p.sku,
-      stock: p.stock,
-      price: Number(p.price),
-      totalValue: p.stock * Number(p.price),
+      stock: p.available,
+      // Stock is valued at cost. Valuing it at the price you hope to sell for
+      // overstates the asset — the previous report used the sell price.
+      price: Number(p.cost_price),
+      totalValue: p.available * Number(p.cost_price),
     }))
 
     const date = format(new Date(), "dd MMM yyyy")

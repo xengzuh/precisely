@@ -1,13 +1,9 @@
 "use server"
 
-import { getSupabase } from "@/lib/supabase/server"
-import { importProducts } from "@/lib/csv-import/importProducts"
-import type { MappedRow, ImportResult } from "@/lib/csv-import/importProducts"
+import type { ImportResult, MappedRow } from "@/lib/csv-import/importProducts"
+import { importProducts } from "@/lib/erp/actions/definitions/imports"
+import { invoke } from "@/lib/erp/actions/server"
 
 export async function runImport(rows: MappedRow[]): Promise<ImportResult> {
-  const supabase = await getSupabase()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error("Not authenticated")
-
-  return importProducts(supabase, user.id, rows)
+  return invoke(importProducts, { rows })
 }

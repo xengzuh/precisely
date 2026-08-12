@@ -14,14 +14,15 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { CSVImporter } from "@/components/csv-import/CSVImporter"
 import { ColumnMapper } from "@/components/csv-import/ColumnMapper"
 import { runImport } from "./actions"
-import type { ImportResult } from "@/lib/csv-import/importProducts"
+import type { ImportResult, MappedRow } from "@/lib/csv-import/importProducts"
 
 type Step = "upload" | "map" | "done"
 
-const SAMPLE_CSV = `Name,SKU,Stock,Price
-Wireless Keyboard,WK-001,50,79.90
-USB Mouse,UM-001,100,29.90
-HDMI Cable,HC-001,200,15.90`
+const SAMPLE_CSV = `Name,SKU,Grade,Base UoM,Density,Concentration,Stock,Cost,List Price,Reorder Point,Lot
+Isopropyl Alcohol 99%,SOL-IPA-99,Technical,L,0.786,99,1200,6.40,9.50,400,IPA-2601-A
+Caustic Soda Solution 32%,ALK-NAOH-32,Technical,L,1.348,32,2500,2.10,3.40,800,NA-2602-C
+Citric Acid Anhydrous,ACD-CITR-ANH,Food,kg,,100,0,4.10,6.70,250,
+Nitrile Gloves Large,PPE-GLV-NIT-L,,ea,,,120,18.00,29.00,40,`
 
 function downloadSample() {
   const blob = new Blob([SAMPLE_CSV], { type: "text/csv" })
@@ -47,7 +48,7 @@ export default function ImportPage() {
     setStep("map")
   }
 
-  async function handleImport(mappedRows: { name: string; sku: string; stock: number; price: number }[]) {
+  async function handleImport(mappedRows: MappedRow[]) {
     setIsImporting(true)
     try {
       const res = await runImport(mappedRows)

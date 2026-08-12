@@ -26,7 +26,8 @@ const addProductSchema = z.object({
     .string()
     .min(3, "SKU must be at least 3 characters")
     .regex(/^\S+$/, "SKU cannot contain spaces"),
-  stock: z.coerce.number().int("Must be a whole number").min(0, "Must be 0 or more"),
+  // Decimal: the first product a chemical distributor adds is rarely countable.
+  stock: z.coerce.number().min(0, "Must be 0 or more"),
   price: z.coerce.number().min(0.01, "Must be at least 0.01"),
 })
 type AddProductValues = z.infer<typeof addProductSchema>
@@ -43,11 +44,14 @@ export function OnboardingWizard() {
   })
 
   async function onSubmit(values: AddProductValues) {
+    // Field names must match what addProduct() reads — FormData is untyped, so
+    // a mismatch here fails silently at runtime rather than at compile time.
     const fd = new FormData()
     fd.set("name", values.name)
     fd.set("sku", values.sku)
-    fd.set("stock", String(values.stock))
-    fd.set("price", String(values.price))
+    fd.set("openingQty", String(values.stock))
+    fd.set("listPrice", String(values.price))
+    fd.set("baseUom", "ea")
     try {
       await addProduct(fd)
       setAddOpen(false)

@@ -1,6 +1,8 @@
-import { getSupabase } from "@/lib/supabase/server"
+import { redirect } from "next/navigation"
 import { PurchaseOrdersTable } from "@/components/purchase-orders-table"
-import type { Supplier, Product, PurchaseOrder } from "@/lib/types"
+import { getUserContext, NoOrganizationError } from "@/lib/erp/actions/context"
+import { listProducts, listPurchaseOrders } from "@/lib/erp/queries"
+import type { ProductListItem, PurchaseOrderListItem, Supplier } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
 
@@ -12,32 +14,39 @@ export default async function PurchaseOrdersPage({
   const params = await searchParams
   const defaultProductId = params.product ?? null
 
-  const supabase = await getSupabase()
+  let orders: PurchaseOrderListItem[]
+  let products: ProductListItem[]
+  let suppliers: Supplier[]
 
-  const [
-    { data: rawOrders },
-    { data: rawSuppliers },
-    { data: rawProducts },
-  ] = await Promise.all([
-    supabase
-      .from("purchase_orders")
-      .select("id, supplier_id, product_id, quantity, unit_cost, total_cost, status, created_at, suppliers(name), products(name)")
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("suppliers")
-      .select("id, name, email, phone, created_at")
-      .order("name"),
-    supabase
-      .from("products")
-      .select("id, name, sku, stock, price, created_at")
-      .order("name"),
-  ])
+  try {
+    const ctx = await getUserContext()
+
+    const [orderRows, productRows, supplierResult] = await Promise.all([
+      listPurchaseOrders(ctx),
+      listProducts(ctx),
+      ctx.db.from("suppliers").select("*").eq("org_id", ctx.orgId).order("name"),
+    ])
+
+    if (supplierResult.error) throw new Error(supplierResult.error.message)
+
+    orders = orderRows
+    products = productRows
+    suppliers = (supplierResult.data ?? []) as Supplier[]
+  } catch (err) {
+    if (err instanceof NoOrganizationError) redirect("/onboarding")
+    return (
+      <p className="text-sm text-destructive">
+        Failed to load purchase orders:{" "}
+        {err instanceof Error ? err.message : "Unknown error"}
+      </p>
+    )
+  }
 
   return (
     <PurchaseOrdersTable
-      orders={(rawOrders ?? []) as unknown as PurchaseOrder[]}
-      suppliers={(rawSuppliers ?? []) as Supplier[]}
-      products={(rawProducts ?? []) as Product[]}
+      orders={orders}
+      suppliers={suppliers}
+      products={products}
       defaultProductId={defaultProductId}
     />
   )

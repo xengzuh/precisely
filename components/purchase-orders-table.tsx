@@ -20,15 +20,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { addPurchaseOrder, markReceived } from "@/app/(dashboard)/purchase-orders/actions"
-import type { Supplier, Product, PurchaseOrder } from "@/lib/types"
+import type { ProductListItem, PurchaseOrderListItem, Supplier } from "@/lib/types"
 
 // ── Schema ───────────────────────────────────────────────────────────────────
 
 const poSchema = z.object({
   supplierId: z.string().min(1, "Please select a supplier"),
   productId:  z.string().min(1, "Please select a product"),
-  quantity:   z.coerce.number().int("Must be a whole number").min(1, "Minimum 1"),
-  unitCost:   z.coerce.number().min(0.01, "Must be at least 0.01"),
+  // Decimal, not integer — chemicals are bought in fractional kg and L.
+  quantity:   z.coerce.number().positive("Must be greater than 0"),
+  unitCost:   z.coerce.number().min(0.0001, "Must be greater than 0"),
+  lotCode:    z.string().optional(),
 })
 type PoValues = z.infer<typeof poSchema>
 
@@ -45,7 +47,9 @@ function StatusBadge({ status }: { status: string }) {
     <span className={cn(
       "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize",
       status === "received"  && "bg-green-100 text-green-800",
-      status === "pending"   && "bg-amber-100 text-amber-800",
+      status === "ordered"   && "bg-amber-100 text-amber-800",
+      status === "partial"   && "bg-blue-100 text-blue-800",
+      status === "draft"     && "bg-slate-100 text-slate-700",
       status === "cancelled" && "bg-gray-100 text-gray-600",
     )}>
       {status}
@@ -56,9 +60,9 @@ function StatusBadge({ status }: { status: string }) {
 // ── Component ────────────────────────────────────────────────────────────────
 
 type Props = {
-  orders: PurchaseOrder[]
+  orders: PurchaseOrderListItem[]
   suppliers: Supplier[]
-  products: Product[]
+  products: ProductListItem[]
   defaultProductId: string | null
 }
 
@@ -76,7 +80,10 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
 
   const watchedQty  = poForm.watch("quantity")
   const watchedCost = poForm.watch("unitCost")
+  const watchedProductId = poForm.watch("productId")
   const totalPreview = (Number(watchedQty) || 0) * (Number(watchedCost) || 0)
+
+  const selectedProduct = products.find((p) => p.id === watchedProductId) ?? null
 
   // Auto-open with pre-selected product when coming from Dashboard Reorder link
   useEffect(() => {
@@ -93,6 +100,8 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
         productId:  values.productId,
         quantity:   values.quantity,
         unitCost:   values.unitCost,
+        uom:        selectedProduct?.base_uom ?? "ea",
+        lotCode:    values.lotCode?.trim() || null,
       })
       setNewPoOpen(false)
       poForm.reset()
@@ -104,7 +113,7 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
 
   // ── Mark Received dialog ─────────────────────────────────────────────────
   const [markOpen, setMarkOpen] = useState(false)
-  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null)
+  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrderListItem | null>(null)
   const [marking, setMarking] = useState(false)
   const [markError, setMarkError] = useState<string | null>(null)
 
@@ -154,10 +163,9 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Order</TableHead>
                 <TableHead>Supplier</TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-                <TableHead className="text-right">Unit Cost</TableHead>
+                <TableHead className="text-right">Lines</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Date</TableHead>
@@ -167,21 +175,18 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
             <TableBody>
               {orders.map((o) => (
                 <TableRow key={o.id}>
-                  <TableCell className="font-medium">{o.suppliers?.name ?? "—"}</TableCell>
-                  <TableCell>{o.products?.name ?? "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums">{o.quantity}</TableCell>
+                  <TableCell className="font-mono text-xs font-medium">{o.order_no}</TableCell>
+                  <TableCell>{o.supplierName ?? "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{o.lineCount}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    RM {Number(o.unit_cost).toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    RM {Number(o.total_cost).toFixed(2)}
+                    RM {Number(o.total).toFixed(2)}
                   </TableCell>
                   <TableCell><StatusBadge status={o.status} /></TableCell>
                   <TableCell className="text-muted-foreground text-sm">
-                    {fmtDate(o.created_at)}
+                    {fmtDate(o.order_date)}
                   </TableCell>
                   <TableCell>
-                    {o.status === "pending" && (
+                    {(o.status === "ordered" || o.status === "partial" || o.status === "draft") && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -258,7 +263,9 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
                     </SelectTrigger>
                     <SelectContent>
                       {products.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name} ({p.sku})
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -274,11 +281,14 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
             {/* Quantity + Unit Cost */}
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
-                <Label htmlFor="po-qty">Quantity</Label>
+                <Label htmlFor="po-qty">
+                  Quantity{selectedProduct ? ` (${selectedProduct.base_uom})` : ""}
+                </Label>
                 <Input
                   id="po-qty"
                   type="number"
-                  min="1"
+                  min="0"
+                  step="0.0001"
                   placeholder="0"
                   {...poForm.register("quantity")}
                 />
@@ -289,12 +299,14 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
                 )}
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="po-cost">Unit Cost (RM)</Label>
+                <Label htmlFor="po-cost">
+                  Unit Cost{selectedProduct ? ` (RM / ${selectedProduct.base_uom})` : " (RM)"}
+                </Label>
                 <Input
                   id="po-cost"
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="0.0001"
                   placeholder="0.00"
                   {...poForm.register("unitCost")}
                 />
@@ -305,6 +317,22 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
                 )}
               </div>
             </div>
+
+            {/*
+              Recording the supplier's lot code at order time means the batch is
+              created with the right identity when the goods are booked in,
+              rather than getting an auto-generated placeholder.
+            */}
+            {selectedProduct?.is_batch_tracked && (
+              <div className="grid gap-1.5">
+                <Label htmlFor="po-lot">Lot code</Label>
+                <Input
+                  id="po-lot"
+                  placeholder="Optional — supplier's lot reference"
+                  {...poForm.register("lotCode")}
+                />
+              </div>
+            )}
 
             {/* Live total preview */}
             {totalPreview > 0 && (
@@ -351,26 +379,26 @@ export function PurchaseOrdersTable({ orders, suppliers, products, defaultProduc
           </DialogHeader>
           <div className="grid gap-3 text-sm">
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Product</span>
-              <span className="font-medium">{selectedOrder?.products?.name ?? "—"}</span>
+              <span className="text-muted-foreground">Order</span>
+              <span className="font-mono text-xs font-medium">{selectedOrder?.order_no}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Supplier</span>
-              <span className="font-medium">{selectedOrder?.suppliers?.name ?? "—"}</span>
+              <span className="font-medium">{selectedOrder?.supplierName ?? "—"}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Quantity</span>
-              <span className="font-medium tabular-nums">{selectedOrder?.quantity}</span>
+              <span className="text-muted-foreground">Lines</span>
+              <span className="font-medium tabular-nums">{selectedOrder?.lineCount}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Total Cost</span>
               <span className="font-semibold tabular-nums">
-                RM {Number(selectedOrder?.total_cost ?? 0).toFixed(2)}
+                RM {Number(selectedOrder?.total ?? 0).toFixed(2)}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground pt-1 border-t">
-              Stock will increase by {selectedOrder?.quantity} unit(s) and a purchase
-              transaction will be recorded.
+            <p className="border-t pt-1 text-xs text-muted-foreground">
+              Every line will be booked into stock, batches created from their lot codes,
+              and each product&apos;s cost price updated to what was paid.
             </p>
             {markError && <p className="text-sm text-destructive">{markError}</p>}
           </div>

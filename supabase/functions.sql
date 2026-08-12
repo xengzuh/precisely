@@ -12,6 +12,13 @@
 -- member of org A cannot move org B's stock even by calling the RPC directly.
 -- ============================================================================
 
+-- Pin the creation schema. The Supabase SQL editor runs with a search_path of
+-- `"$user", public, extensions`, and Postgres silently skips entries in that
+-- list that do not exist or that you lack USAGE on — so if public is skipped,
+-- unqualified CREATEs land in extensions where PostgREST will never see them.
+-- With this set, a missing public schema is a loud error instead.
+set search_path = public;
+
 -- ── Document numbering ──────────────────────────────────────────────────────
 
 create or replace function next_document_number(p_org uuid, p_kind text)

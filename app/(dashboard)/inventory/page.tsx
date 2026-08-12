@@ -1,26 +1,23 @@
-import { getSupabase } from "@/lib/supabase/server"
+import { redirect } from "next/navigation"
 import { InventoryTable } from "@/components/inventory-table"
-import type { Product } from "@/lib/types"
+import { getUserContext, NoOrganizationError } from "@/lib/erp/actions/context"
+import { listProducts } from "@/lib/erp/queries"
 
 export const dynamic = "force-dynamic"
 
 export default async function InventoryPage() {
-  const supabase = await getSupabase()
-
-  const { data, error } = await supabase
-    .from("products")
-    .select("id, name, sku, stock, price, created_at")
-    .order("name")
-
-  if (error) {
+  let products
+  try {
+    const ctx = await getUserContext()
+    products = await listProducts(ctx)
+  } catch (err) {
+    if (err instanceof NoOrganizationError) redirect("/onboarding")
     return (
       <p className="text-sm text-destructive">
-        Failed to load inventory: {error.message}
+        Failed to load inventory: {err instanceof Error ? err.message : "Unknown error"}
       </p>
     )
   }
-
-  const products = (data ?? []) as Product[]
 
   return <InventoryTable products={products} />
 }

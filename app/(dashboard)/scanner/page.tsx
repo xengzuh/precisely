@@ -16,7 +16,8 @@ import {
   sellProduct,
   quickStockIn,
 } from "@/app/(dashboard)/inventory/actions"
-import type { Product } from "@/lib/types"
+import { formatQty } from "@/lib/erp/uom"
+import type { ProductListItem } from "@/lib/types"
 
 type Phase =
   | "scanning"
@@ -28,7 +29,7 @@ type Phase =
 
 export default function ScannerPage() {
   const [scanKey, setScanKey] = useState(0)
-  const [product, setProduct] = useState<Product | null>(null)
+  const [product, setProduct] = useState<ProductListItem | null>(null)
   const [phase, setPhase] = useState<Phase>("scanning")
 
   const resetScan = useCallback(() => {
@@ -105,15 +106,15 @@ export default function ScannerPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <p className="text-xs text-muted-foreground">Stock</p>
-                <p className="font-semibold tabular-nums text-2xl">
-                  {product.stock}
+                <p className="text-xs text-muted-foreground">Available</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {formatQty(product.available, product.base_uom)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Price</p>
-                <p className="font-semibold tabular-nums text-2xl">
-                  RM {Number(product.price).toFixed(2)}
+                <p className="text-2xl font-semibold tabular-nums">
+                  RM {Number(product.list_price).toFixed(2)}
                 </p>
               </div>
             </div>
@@ -125,7 +126,7 @@ export default function ScannerPage() {
               size="lg"
               variant="outline"
               className="h-16 flex-col gap-1"
-              disabled={isProcessing || product.stock === 0}
+              disabled={isProcessing || product.available <= 0}
               onClick={handleRecordSale}
             >
               {phase === "processing-sale" ? (
