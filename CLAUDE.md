@@ -146,11 +146,55 @@ Supabase's generics silently collapse every table to `never`.
 app/
   (auth)/            login, onboarding
   (dashboard)/       layout.tsx = sidebar + bottom nav shell
-    dashboard/ inventory/ sales/ purchase-orders/ suppliers/
-    scanner/ reports/ settings/
-  api/reports/       React-PDF route handlers (runtime = "nodejs")
+    dashboard/
+    inbox/ agents/                   — agent surface (agents/policies/ = autonomy matrix)
+    customers/ orders/ invoices/     — sell side, each with [id]/
+    inventory/ sales/ scanner/       — stock ("sales" is the movement ledger)
+    suppliers/ purchase-orders/      — buy side
+    reports/ settings/
+  api/reports/           React-PDF route handlers (runtime = "nodejs")
+  api/invoices/[id]/pdf  the customer-facing invoice
+  api/inbound/email      HMAC-verified webhook → PO intake agent
 proxy.ts             Next 16's renamed middleware.ts — session refresh + auth redirect
 ```
+
+`/orders` is sales orders; purchasing lives at `/purchase-orders` and is
+labelled "Purchasing" in the nav. Detail pages are server components — only the
+interactive parts (workflow buttons, line editor, dialogs) are `"use client"`.
+
+## The agent layer
+
+`lib/ai/` is the only place that talks to Anthropic.
+
+- **`client.ts`** — the single client. Model `claude-opus-5`, adaptive thinking
+  (on by default), effort `high` for extraction and `xhigh` for agent loops.
+  `assertNotRefused()` must be called before reading any response: Opus 5's
+  classifiers can decline with a 200 and an empty `content`, and indexing
+  `content[0]` throws on exactly that case.
+- **`tools.ts`** — generates tool definitions from the action registry. There is
+  no second list of agent capabilities. A gated action returns
+  `pending_approval` to the model rather than executing.
+- **`run.ts`** — opens and closes an `agent_runs` row around every invocation,
+  with token counts and cost.
+- **`agents/po-intake.ts`** — one `messages.parse()` call with a zod output
+  schema. The catalog and customer list sit behind a `cache_control` breakpoint
+  so they are cache-reads on every document after the first; the document goes
+  last because it is the volatile part.
+
+Two env vars, both server-only, neither with a `NEXT_PUBLIC_` prefix:
+`ANTHROPIC_API_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` for the agent path.
+`INBOUND_WEBHOOK_SECRET` + `INBOUND_ORG_ID` enable the email webhook.
+
+**The webhook resolves `org_id` from server config, never from the payload.**
+That path runs on the service role with no RLS, so an org id taken from the
+request body would let any sender write into any tenant they can name.
+
+## Testing
+
+`npm run test` (Vitest, `tests/*.test.ts`). Covers the things where a silent
+wrong answer ships as a wrong quantity of a chemical: UoM conversion and the
+missing-density error, package expansion, and the `shouldGate` autonomy
+decision. No DB or network — these are pure functions by design.
 
 ## Styling conventions
 

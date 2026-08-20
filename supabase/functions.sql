@@ -364,6 +364,7 @@ declare
   v_remaining numeric;
   v_take      numeric;
   v_available numeric;
+  v_lots      integer;
 begin
   select org_id, status into v_org, v_status from sales_orders where id = p_order;
   if not found then
@@ -393,6 +394,8 @@ begin
     continue when v_remaining <= 0;
 
     if v_line.is_batch_tracked then
+      v_lots := 0;
+
       for v_batch in
         select * from batches
         where product_id = v_line.product_id
@@ -404,14 +407,26 @@ begin
 
         v_available := v_batch.qty_on_hand - v_batch.qty_reserved;
         v_take := least(v_available, v_remaining);
+        v_lots := v_lots + 1;
+
+        -- A line carries exactly one batch_id, and fulfil_sales_order posts the
+        -- whole allocated quantity against it. Drawing a single line from two
+        -- lots would therefore consume the first twice and strand the
+        -- reservation on the second, so refuse it: the caller splits the line
+        -- per lot instead. Reserving nothing is recoverable; a wrong ledger is
+        -- not, and in this industry the lot on the paperwork must be the lot in
+        -- the drum.
+        if v_lots > 1 then
+          raise exception
+            'Line % (%) needs stock from more than one lot — split it into one line per lot before allocating',
+            v_line.line_no, v_line.sku;
+        end if;
 
         update batches set qty_reserved = qty_reserved + v_take where id = v_batch.id;
 
-        -- One batch per line keeps the model simple. A line needing stock from
-        -- several lots is split by the caller before allocation.
         update sales_order_lines
         set qty_allocated = qty_allocated + v_take,
-            batch_id      = coalesce(batch_id, v_batch.id)
+            batch_id      = v_batch.id
         where id = v_line.id;
 
         v_remaining := v_remaining - v_take;
@@ -574,6 +589,47 @@ begin
   update sales_orders set status = 'invoiced' where id = p_order;
 
   return v_invoice_id;
+end;
+$$;
+
+-- Apply a payment to an invoice.
+--
+-- Atomic for the same reason every other balance change here is: two people
+-- recording receipts against one invoice must not both read the same
+-- amount_paid and write it back, or a payment silently disappears.
+create or replace function record_invoice_payment(p_invoice uuid, p_amount numeric)
+returns numeric
+language plpgsql
+as $$
+declare
+  v_invoice invoices%rowtype;
+  v_paid    numeric(14,2);
+begin
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Payment amount must be positive';
+  end if;
+
+  select * into v_invoice from invoices where id = p_invoice for update;
+  if not found then
+    raise exception 'Invoice not found';
+  end if;
+  if v_invoice.status = 'void' then
+    raise exception 'Cannot record a payment against a void invoice';
+  end if;
+
+  v_paid := v_invoice.amount_paid + p_amount;
+  if v_paid > v_invoice.total then
+    raise exception 'Payment of % exceeds the % still outstanding',
+      p_amount, v_invoice.total - v_invoice.amount_paid;
+  end if;
+
+  update invoices
+  set amount_paid = v_paid,
+      status      = case when v_paid >= total then 'paid' else status end,
+      paid_at     = case when v_paid >= total then now() else paid_at end
+  where id = p_invoice;
+
+  return v_paid;
 end;
 $$;
 

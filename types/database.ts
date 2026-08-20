@@ -301,6 +301,8 @@ export type AgentRunRow = {
   input_ref: string | null
   tokens_in: number
   tokens_out: number
+  cache_read_tokens: number
+  cache_write_tokens: number
   cost_usd: number
   error: string | null
   started_at: string
@@ -346,6 +348,7 @@ export type InboundDocumentRow = {
   subject: string | null
   storage_path: string | null
   mime: string | null
+  message_id: string | null
   body_text: string | null
   status: InboundStatus
   extracted: Json | null
@@ -586,6 +589,8 @@ export type Database = {
         | "input_ref"
         | "tokens_in"
         | "tokens_out"
+        | "cache_read_tokens"
+        | "cache_write_tokens"
         | "cost_usd"
         | "error"
         | "started_at"
@@ -619,6 +624,7 @@ export type Database = {
         | "subject"
         | "storage_path"
         | "mime"
+        | "message_id"
         | "body_text"
         | "status"
         | "extracted"
@@ -673,6 +679,10 @@ export type Database = {
       fulfil_sales_order: { Args: { p_order: string }; Returns: undefined }
       cancel_sales_order: { Args: { p_order: string }; Returns: undefined }
       create_invoice_from_order: { Args: { p_order: string }; Returns: string }
+      record_invoice_payment: {
+        Args: { p_invoice: string; p_amount: number }
+        Returns: number
+      }
       create_purchase_order: {
         Args: { p_org: string; p_header: Json; p_lines: Json }
         Returns: string

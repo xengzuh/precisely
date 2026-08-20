@@ -1,5 +1,5 @@
 {
-  "name": "my-erp-system",
+  "name": "precisely",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,9 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "inbound": "node scripts/send-inbound-email.mjs",
     "db:types": "supabase gen types typescript --linked > types/database.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
     "@base-ui/react": "^1.4.1",
     "@hookform/resolvers": "^5.2.2",
     "@react-pdf/renderer": "^4.5.1",
@@ -43,6 +47,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

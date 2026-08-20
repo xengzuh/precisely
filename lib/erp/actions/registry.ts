@@ -1,10 +1,12 @@
 import { importProducts } from "./definitions/imports"
+import { setAutonomyPolicy, updateOrganization } from "./definitions/org"
 import { getCustomer, upsertCustomer, upsertSupplier } from "./definitions/parties"
 import {
   adjustStock,
   createProduct,
   recordQuickSale,
   searchProducts,
+  upsertPackageType,
 } from "./definitions/products"
 import { createPurchaseOrder, receivePurchaseOrder } from "./definitions/purchasing"
 import {
@@ -14,7 +16,9 @@ import {
   createInvoice,
   createSalesOrder,
   fulfilSalesOrder,
+  recordInvoicePayment,
   sendInvoice,
+  updateSalesOrderLine,
 } from "./definitions/sales"
 import type { AnyActionDefinition } from "./types"
 
@@ -32,19 +36,25 @@ const ACTIONS = [
   adjustStock,
   recordQuickSale,
   searchProducts,
+  upsertPackageType,
   importProducts,
+  // Organization
+  updateOrganization,
+  setAutonomyPolicy,
   // Parties
   upsertCustomer,
   getCustomer,
   upsertSupplier,
   // Sales
   createSalesOrder,
+  updateSalesOrderLine,
   confirmSalesOrder,
   allocateSalesOrder,
   fulfilSalesOrder,
   cancelSalesOrder,
   createInvoice,
   sendInvoice,
+  recordInvoicePayment,
   // Purchasing
   createPurchaseOrder,
   receivePurchaseOrder,

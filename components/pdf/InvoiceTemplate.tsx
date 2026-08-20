@@ -1,4 +1,4 @@
-import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer"
+import { Document, Page, View, Text, StyleSheet } from "@react-pdf/renderer"
 
 const ACCENT = "#1d4ed8"
 const MUTED = "#6b7280"
@@ -11,14 +11,11 @@ const s = StyleSheet.create({
   between: { flexDirection: "row", justifyContent: "space-between" },
   right: { alignItems: "flex-end" },
   accentLine: { height: 3, backgroundColor: ACCENT, marginBottom: 24 },
-  // Header
   invoiceWord: { fontSize: 28, fontFamily: "Helvetica-Bold", letterSpacing: 2 },
   invoiceNum: { color: MUTED, marginTop: 4 },
   companyName: { fontSize: 13, fontFamily: "Helvetica-Bold" },
   companyContact: { color: MUTED, marginTop: 3 },
-  // Meta
   metaLabel: { color: MUTED, width: 72 },
-  // Bill To
   sectionLabel: {
     fontSize: 8,
     color: MUTED,
@@ -27,7 +24,7 @@ const s = StyleSheet.create({
     marginBottom: 4,
   },
   clientName: { fontFamily: "Helvetica-Bold", fontSize: 11 },
-  // Table
+  clientLine: { color: MUTED, marginTop: 2, maxWidth: 220 },
   tableHeader: {
     flexDirection: "row",
     backgroundColor: BG_LIGHT,
@@ -37,7 +34,6 @@ const s = StyleSheet.create({
     borderStyle: "solid",
     paddingVertical: 6,
     paddingHorizontal: 8,
-    marginBottom: 0,
   },
   tableRow: {
     flexDirection: "row",
@@ -48,17 +44,16 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
   },
   colName: { flex: 3 },
-  colQty: { flex: 1, textAlign: "right" },
-  colUnit: { flex: 1, textAlign: "right" },
-  colTotal: { flex: 1, textAlign: "right" },
+  colQty: { flex: 1.2, textAlign: "right" },
+  colUnit: { flex: 1.2, textAlign: "right" },
+  colTotal: { flex: 1.2, textAlign: "right" },
   headerText: { fontFamily: "Helvetica-Bold", fontSize: 9, color: MUTED },
-  // Totals
+  sku: { fontSize: 8, color: MUTED, marginTop: 1 },
   totalRow: { flexDirection: "row", justifyContent: "flex-end", marginTop: 6 },
-  totalLabel: { width: 100, color: MUTED },
-  totalValue: { width: 80, textAlign: "right" },
-  grandLabel: { width: 100, fontFamily: "Helvetica-Bold" },
-  grandValue: { width: 80, textAlign: "right", fontFamily: "Helvetica-Bold", fontSize: 12 },
-  // Footer
+  totalLabel: { width: 110, color: MUTED, textAlign: "right", paddingRight: 12 },
+  totalValue: { width: 90, textAlign: "right" },
+  grandLabel: { width: 110, fontFamily: "Helvetica-Bold", textAlign: "right", paddingRight: 12 },
+  grandValue: { width: 90, textAlign: "right", fontFamily: "Helvetica-Bold", fontSize: 12 },
   footer: {
     position: "absolute",
     bottom: 40,
@@ -74,58 +69,90 @@ const s = StyleSheet.create({
   footerText: { color: MUTED, fontSize: 9 },
 })
 
-type LineItem = { name: string; quantity: number; unitPrice: number }
-
-type Props = {
-  invoiceNumber: string
-  issuedDate: string
-  dueDate: string
-  clientName: string
-  items: LineItem[]
-  companyName?: string
-  companyContact?: string
+export type InvoicePdfLine = {
+  description: string
+  sku: string | null
+  qty: number
+  uom: string
+  unitPrice: number
+  lineTotal: number
 }
 
+export type InvoicePdfProps = {
+  invoiceNo: string
+  issueDate: string
+  dueDate: string
+  companyName: string
+  customerName: string
+  customerAddress: string | null
+  customerTaxId: string | null
+  lines: InvoicePdfLine[]
+  subtotal: number
+  tax: number
+  taxLabel: string
+  total: number
+  amountPaid: number
+  currency: string
+  locale: string
+}
+
+/**
+ * The customer-facing invoice.
+ *
+ * Every figure is passed in, never recomputed here: the totals on the PDF must
+ * be byte-for-byte the ones stored on the invoice row, or the document and the
+ * ledger disagree about what was billed. Tax rate and currency come from the
+ * organization for the same reason — a hard-coded 6% silently misbills the
+ * moment the rate changes or the org sells across a border.
+ */
 export function InvoiceTemplate({
-  invoiceNumber,
-  issuedDate,
+  invoiceNo,
+  issueDate,
   dueDate,
-  clientName,
-  items,
-  companyName = "Your Company",
-  companyContact = "contact@yourcompany.com",
-}: Props) {
-  const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
-  const sst = subtotal * 0.06
-  const grandTotal = subtotal + sst
+  companyName,
+  customerName,
+  customerAddress,
+  customerTaxId,
+  lines,
+  subtotal,
+  tax,
+  taxLabel,
+  total,
+  amountPaid,
+  currency,
+  locale,
+}: InvoicePdfProps) {
+  const money = (value: number) =>
+    new Intl.NumberFormat(locale, { style: "currency", currency }).format(value)
+
+  const balance = total - amountPaid
 
   return (
     <Document>
       <Page size="A4" style={s.page}>
-        {/* Header */}
         <View style={[s.between, { marginBottom: 24 }]}>
           <View>
             <Text style={s.invoiceWord}>INVOICE</Text>
-            <Text style={s.invoiceNum}>{invoiceNumber}</Text>
+            <Text style={s.invoiceNum}>{invoiceNo}</Text>
           </View>
           <View style={s.right}>
-            <Image src="/logo.svg" style={{ width: 120, height: 36, objectFit: "contain", marginBottom: 4 }} />
-            <Text style={s.companyContact}>{companyContact}</Text>
+            <Text style={s.companyName}>{companyName}</Text>
           </View>
         </View>
 
         <View style={s.accentLine} />
 
-        {/* Dates + Bill To */}
         <View style={[s.between, { marginBottom: 36 }]}>
           <View>
             <Text style={s.sectionLabel}>Bill To</Text>
-            <Text style={s.clientName}>{clientName}</Text>
+            <Text style={s.clientName}>{customerName}</Text>
+            {customerAddress && <Text style={s.clientLine}>{customerAddress}</Text>}
+            {customerTaxId && <Text style={s.clientLine}>Tax ID: {customerTaxId}</Text>}
           </View>
           <View style={s.right}>
             <View style={[s.row, { marginBottom: 3 }]}>
               <Text style={s.metaLabel}>Issue Date</Text>
-              <Text>{issuedDate}</Text>
+              <Text>{issueDate}</Text>
             </View>
             <View style={s.row}>
               <Text style={s.metaLabel}>Due Date</Text>
@@ -134,42 +161,64 @@ export function InvoiceTemplate({
           </View>
         </View>
 
-        {/* Line items table */}
         <View style={s.tableHeader}>
           <Text style={[s.colName, s.headerText]}>Description</Text>
           <Text style={[s.colQty, s.headerText]}>Qty</Text>
           <Text style={[s.colUnit, s.headerText]}>Unit Price</Text>
           <Text style={[s.colTotal, s.headerText]}>Total</Text>
         </View>
-        {items.map((item, i) => (
+        {lines.map((line, i) => (
           <View key={i} style={s.tableRow}>
-            <Text style={s.colName}>{item.name}</Text>
-            <Text style={s.colQty}>{item.quantity}</Text>
-            <Text style={s.colUnit}>RM {item.unitPrice.toFixed(2)}</Text>
-            <Text style={s.colTotal}>RM {(item.quantity * item.unitPrice).toFixed(2)}</Text>
+            <View style={s.colName}>
+              <Text>{line.description}</Text>
+              {line.sku && <Text style={s.sku}>{line.sku}</Text>}
+            </View>
+            <Text style={s.colQty}>
+              {line.qty} {line.uom}
+            </Text>
+            <Text style={s.colUnit}>{money(line.unitPrice)}</Text>
+            <Text style={s.colTotal}>{money(line.lineTotal)}</Text>
           </View>
         ))}
 
-        {/* Totals */}
         <View style={{ marginTop: 16 }}>
           <View style={s.totalRow}>
             <Text style={s.totalLabel}>Subtotal</Text>
-            <Text style={s.totalValue}>RM {subtotal.toFixed(2)}</Text>
+            <Text style={s.totalValue}>{money(subtotal)}</Text>
           </View>
           <View style={s.totalRow}>
-            <Text style={s.totalLabel}>SST (6%)</Text>
-            <Text style={s.totalValue}>RM {sst.toFixed(2)}</Text>
+            <Text style={s.totalLabel}>{taxLabel}</Text>
+            <Text style={s.totalValue}>{money(tax)}</Text>
           </View>
-          <View style={[s.totalRow, { marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderColor: BORDER, borderStyle: "solid" }]}>
-            <Text style={s.grandLabel}>Grand Total</Text>
-            <Text style={[s.grandValue, { color: ACCENT }]}>RM {grandTotal.toFixed(2)}</Text>
+          <View
+            style={[
+              s.totalRow,
+              { marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderColor: BORDER, borderStyle: "solid" },
+            ]}
+          >
+            <Text style={s.grandLabel}>Total</Text>
+            <Text style={[s.grandValue, { color: ACCENT }]}>{money(total)}</Text>
           </View>
+
+          {amountPaid > 0 && (
+            <>
+              <View style={s.totalRow}>
+                <Text style={s.totalLabel}>Paid</Text>
+                <Text style={s.totalValue}>−{money(amountPaid)}</Text>
+              </View>
+              <View style={s.totalRow}>
+                <Text style={s.grandLabel}>Balance Due</Text>
+                <Text style={s.grandValue}>{money(balance)}</Text>
+              </View>
+            </>
+          )}
         </View>
 
-        {/* Footer */}
         <View style={s.footer}>
-          <Text style={s.footerText}>Thank you for your business</Text>
-          <Text style={s.footerText}>{companyContact}</Text>
+          <Text style={s.footerText}>
+            {balance <= 0 ? "Paid in full — thank you" : `Payment due by ${dueDate}`}
+          </Text>
+          <Text style={s.footerText}>{companyName}</Text>
         </View>
       </Page>
     </Document>

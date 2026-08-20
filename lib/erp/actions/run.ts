@@ -12,7 +12,7 @@ import {
   type Risk,
 } from "./types"
 
-interface ResolvedPolicy {
+export interface ResolvedPolicy {
   mode: AutonomyMode
   threshold: number | null
 }
@@ -45,8 +45,12 @@ async function resolvePolicy(
  * The last one is deliberately not overridable by policy. An org can put
  * `create_sales_order` on auto, but an individual order the action itself
  * flagged as high risk still stops for review.
+ *
+ * Exported because it is the whole autonomy model in four lines, and the cost
+ * of getting it wrong — an agent shipping stock unattended — justifies testing
+ * it directly rather than through a mocked database.
  */
-function shouldGate(policy: ResolvedPolicy, risk: Risk, amount: number | null): boolean {
+export function shouldGate(policy: ResolvedPolicy, risk: Risk, amount: number | null): boolean {
   if (policy.mode === "approve") return true
   if (risk === "high") return true
   if (policy.threshold !== null && amount !== null && amount > policy.threshold) return true

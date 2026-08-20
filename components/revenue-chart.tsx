@@ -1,52 +1,23 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts"
+import dynamic from "next/dynamic"
 
-export type ChartEntry = {
-  date: string
-  label: string
-  revenue: number
-}
+export type { ChartEntry } from "./revenue-chart-inner"
 
-export function RevenueChart({ data }: { data: ChartEntry[] }) {
-  // Recharts uses ResizeObserver; guard against SSR to prevent hydration mismatch.
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
-
-  if (!mounted) return <div className="h-[200px]" />
-
-  return (
-    <ResponsiveContainer width="100%" height={200}>
-      <BarChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-        <XAxis
-          dataKey="label"
-          tick={{ fontSize: 11 }}
-          tickLine={false}
-          axisLine={false}
-        />
-        <YAxis
-          tick={{ fontSize: 11 }}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v: number) => `RM${v}`}
-          width={56}
-        />
-        <Tooltip
-          formatter={(value) => [`RM ${Number(value).toFixed(2)}`, "Revenue"]}
-          cursor={{ fill: "#f3f4f6" }}
-        />
-        <Bar dataKey="revenue" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
-  )
-}
+/**
+ * Client-only, because Recharts' ResponsiveContainer measures the DOM and
+ * renders nothing meaningful on the server — rendering it in both places
+ * produces a hydration mismatch.
+ *
+ * The previous version gated on a `mounted` flag set from an effect, which
+ * works but costs a second render pass on every load and trips React's
+ * set-state-in-effect rule. Skipping SSR for this subtree says the same thing
+ * to the framework directly.
+ */
+export const RevenueChart = dynamic(
+  () => import("./revenue-chart-inner").then((m) => m.RevenueChartInner),
+  {
+    ssr: false,
+    loading: () => <div className="h-[200px]" />,
+  }
+)

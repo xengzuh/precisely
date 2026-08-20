@@ -481,6 +481,12 @@ create table agent_runs (
   ended_at   timestamptz
 );
 
+-- Cache reads cost a tenth of a fresh read, so a prefix that is never re-read
+-- inside the cache TTL is pure overhead. Folding these into tokens_in hides
+-- exactly that, which is why they get their own columns.
+alter table agent_runs add column cache_read_tokens  bigint not null default 0;
+alter table agent_runs add column cache_write_tokens bigint not null default 0;
+
 create index agent_runs_org_idx on agent_runs (org_id, started_at desc);
 
 -- One row per business operation attempted through runAction(), whether by a
@@ -558,6 +564,17 @@ create table inbound_documents (
   created_by    uuid references auth.users(id),
   created_at    timestamptz not null default now()
 );
+
+-- The RFC 5322 Message-ID of the email a document came from. Mail providers
+-- retry a webhook whenever it does not return 2xx, and customers forward the
+-- same PO to two of your staff — without this, one order becomes three.
+alter table inbound_documents add column message_id text;
+
+-- Partial, so the many uploads with no message id do not collide with each
+-- other on a null.
+create unique index inbound_documents_message_id_idx
+  on inbound_documents (org_id, message_id)
+  where message_id is not null;
 
 create index inbound_documents_org_status_idx on inbound_documents (org_id, status, created_at desc);
 

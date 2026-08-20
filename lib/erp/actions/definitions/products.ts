@@ -207,6 +207,78 @@ export const recordQuickSale = defineAction({
   },
 })
 
+export const upsertPackageType = defineAction({
+  name: "upsert_package_type",
+  description:
+    "Define how a product physically ships — a '200 L drum', a '25 kg bag', a '1000 L IBC'. " +
+    "qtyPerPackage is how much base-unit product one package holds, so an order for 10 drums " +
+    "can be converted to a stock quantity.",
+  defaultMode: "approve",
+  schema: z.object({
+    packageTypeId: z.uuid().nullable().optional(),
+    productId: z.uuid(),
+    name: z.string().trim().min(1, "Give the package a name"),
+    qtyPerPackage: z.number().positive("A package must hold more than zero"),
+    uom: uom,
+    tareKg: z.number().min(0).nullable().optional(),
+    isDefault: z.boolean().default(false),
+  }),
+  risk: () => "low",
+  summarize: (i) => `${i.packageTypeId ? "Update" : "Add"} package type "${i.name}"`,
+  revalidate: ["/inventory"],
+  async execute(ctx, input) {
+    const product = await loadProduct(ctx, input.productId)
+
+    // A package measured in a different unit from the product's base unit is
+    // only meaningful if we can convert between them. Without a density,
+    // "200 L drum" of a product stocked in kg is an unanswerable question —
+    // and guessing 1.0 would silently misstate every order in drums.
+    if (input.uom !== product.base_uom && input.uom !== "ea" && product.base_uom !== "ea") {
+      if (!product.density_kg_per_l) {
+        throw new ActionError(
+          `${product.sku} is stocked in ${product.base_uom} and has no density, so a package measured in ${input.uom} cannot be converted`,
+          "invalid_input"
+        )
+      }
+    } else if (input.uom !== product.base_uom) {
+      throw new ActionError(
+        `A package for ${product.sku} must be measured in ${product.base_uom}`,
+        "invalid_input"
+      )
+    }
+
+    const row = {
+      org_id: ctx.orgId,
+      product_id: input.productId,
+      name: input.name,
+      qty_per_package: input.qtyPerPackage,
+      uom: input.uom,
+      tare_kg: input.tareKg ?? null,
+      is_default: input.isDefault,
+    }
+
+    if (input.packageTypeId) {
+      const { error } = await ctx.db
+        .from("package_types")
+        .update(row)
+        .eq("id", input.packageTypeId)
+        .eq("org_id", ctx.orgId)
+
+      if (error) throw new ActionError(error.message, "execution_failed")
+      return { packageTypeId: input.packageTypeId, created: false }
+    }
+
+    const { data, error } = await ctx.db
+      .from("package_types")
+      .insert(row)
+      .select("id")
+      .single()
+
+    if (error) throw new ActionError(error.message, "execution_failed")
+    return { packageTypeId: data.id, created: true }
+  },
+})
+
 export const searchProducts = defineAction({
   name: "search_products",
   description:

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { recordAlias } from "@/lib/erp/aliases"
 import { isoDate, uomSchema } from "@/lib/erp/schema"
 import { roundMoney } from "@/lib/erp/uom"
 import { defineAction } from "../define"
@@ -38,6 +39,26 @@ async function orderTotal(ctx: ActionContext, orderId: string): Promise<number |
     .maybeSingle()
 
   return data?.total ?? null
+}
+
+/**
+ * Prove the order belongs to this org before handing its id to an RPC.
+ *
+ * allocate/fulfil/cancel/invoice all take only `p_order`. For a signed-in user
+ * that is safe — the functions are SECURITY INVOKER, so RLS rejects another
+ * org's row. Agent runs use the service role and have no RLS at all, so
+ * without this check an order id from a neighbouring tenant would be honoured.
+ */
+async function assertOrderInOrg(ctx: ActionContext, orderId: string): Promise<void> {
+  const { data, error } = await ctx.db
+    .from("sales_orders")
+    .select("id")
+    .eq("id", orderId)
+    .eq("org_id", ctx.orgId)
+    .maybeSingle()
+
+  if (error) throw new ActionError(error.message, "execution_failed")
+  if (!data) throw new ActionError("Sales order not found", "invalid_input")
 }
 
 export const createSalesOrder = defineAction({
@@ -115,6 +136,7 @@ export const confirmSalesOrder = defineAction({
       .from("sales_order_lines")
       .select("id", { count: "exact", head: true })
       .eq("order_id", input.orderId)
+      .eq("org_id", ctx.orgId)
       .is("product_id", null)
 
     if (countError) throw new ActionError(countError.message, "execution_failed")
@@ -149,6 +171,8 @@ export const allocateSalesOrder = defineAction({
   summarize: () => "Reserve stock for sales order",
   revalidate: ["/orders", "/inventory"],
   async execute(ctx, input) {
+    await assertOrderInOrg(ctx, input.orderId)
+
     const { error } = await ctx.db.rpc("allocate_sales_order", { p_order: input.orderId })
     if (error) throw new ActionError(error.message, "execution_failed")
     return { orderId: input.orderId, status: "allocated" }
@@ -156,6 +180,8 @@ export const allocateSalesOrder = defineAction({
   async revert(ctx, record) {
     const result = record.result as { orderId?: string } | null
     if (!result?.orderId) throw new ActionError("No order recorded", "forbidden")
+
+    await assertOrderInOrg(ctx, result.orderId)
 
     const { error } = await ctx.db.rpc("cancel_sales_order", { p_order: result.orderId })
     if (error) throw new ActionError(error.message, "execution_failed")
@@ -175,6 +201,8 @@ export const fulfilSalesOrder = defineAction({
   summarize: () => "Fulfil and ship sales order",
   revalidate: ["/orders", "/inventory", "/sales", "/dashboard"],
   async execute(ctx, input) {
+    await assertOrderInOrg(ctx, input.orderId)
+
     const { error } = await ctx.db.rpc("fulfil_sales_order", { p_order: input.orderId })
     if (error) throw new ActionError(error.message, "execution_failed")
     return { orderId: input.orderId, status: "fulfilled" }
@@ -190,9 +218,92 @@ export const cancelSalesOrder = defineAction({
   summarize: (i) => `Cancel sales order${i.reason ? ` — ${i.reason}` : ""}`,
   revalidate: ["/orders", "/inventory"],
   async execute(ctx, input) {
+    await assertOrderInOrg(ctx, input.orderId)
+
     const { error } = await ctx.db.rpc("cancel_sales_order", { p_order: input.orderId })
     if (error) throw new ActionError(error.message, "execution_failed")
     return { orderId: input.orderId, status: "cancelled" }
+  },
+})
+
+export const updateSalesOrderLine = defineAction({
+  name: "update_sales_order_line",
+  description:
+    "Correct one line of a draft sales order — match it to a catalog product, or fix the quantity " +
+    "or unit price. Quantity must be in the product's base unit of measure. Use this to resolve " +
+    "lines a document extraction could not match; it clears the review flag once a product is set.",
+  defaultMode: "approve",
+  schema: z.object({
+    lineId: z.uuid(),
+    productId: z.uuid().nullable().optional(),
+    qty: z.number().positive().optional(),
+    unitPrice: z.number().min(0).optional(),
+    notes: z.string().trim().nullable().optional(),
+  }),
+  risk: () => "low",
+  summarize: (i) => `Update sales order line${i.productId ? " and match it to a product" : ""}`,
+  revalidate: ["/orders"],
+  async execute(ctx, input) {
+    const { data: line, error: readError } = await ctx.db
+      .from("sales_order_lines")
+      .select(
+        "id, order_id, qty, unit_price, product_id, description_raw, package_type_id, sales_orders(status, customer_id)"
+      )
+      .eq("id", input.lineId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle()
+
+    if (readError) throw new ActionError(readError.message, "execution_failed")
+    if (!line) throw new ActionError("Line not found", "invalid_input")
+
+    // Once stock is reserved against a line, changing its quantity would leave
+    // the reservation and the order disagreeing. Cancel or re-allocate instead.
+    if (line.sales_orders?.status !== "draft") {
+      throw new ActionError(
+        `Only draft orders can be edited (order is ${line.sales_orders?.status})`,
+        "invalid_input"
+      )
+    }
+
+    const qty = input.qty ?? line.qty
+    const unitPrice = input.unitPrice ?? line.unit_price
+    const productId = input.productId !== undefined ? input.productId : line.product_id
+
+    const { error } = await ctx.db
+      .from("sales_order_lines")
+      .update({
+        product_id: productId,
+        qty,
+        unit_price: unitPrice,
+        line_total: roundMoney(qty * unitPrice),
+        // A human picking the product is the review. An agent reaching this
+        // path has already been through the approval gate.
+        needs_review: productId ? false : true,
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+      })
+      .eq("id", input.lineId)
+      .eq("org_id", ctx.orgId)
+
+    if (error) throw new ActionError(error.message, "execution_failed")
+
+    const { error: totalsError } = await ctx.db.rpc("recalc_sales_order_totals", {
+      p_order: line.order_id,
+    })
+    if (totalsError) throw new ActionError(totalsError.message, "execution_failed")
+
+    // Learn from the correction. Only when a human is doing the resolving —
+    // an agent recording its own guesses as facts would teach itself its
+    // mistakes and make the next extraction worse, not better.
+    if (productId && !line.product_id && ctx.actor === "user") {
+      await recordAlias(ctx, {
+        customerId: line.sales_orders?.customer_id ?? null,
+        rawText: line.description_raw,
+        productId,
+        packageTypeId: line.package_type_id,
+      })
+    }
+
+    return { lineId: input.lineId, orderId: line.order_id }
   },
 })
 
@@ -208,6 +319,8 @@ export const createInvoice = defineAction({
   summarize: () => "Raise invoice from sales order",
   revalidate: ["/invoices", "/orders", "/dashboard"],
   async execute(ctx, input) {
+    await assertOrderInOrg(ctx, input.orderId)
+
     const { data, error } = await ctx.db.rpc("create_invoice_from_order", {
       p_order: input.orderId,
     })
@@ -237,5 +350,46 @@ export const sendInvoice = defineAction({
 
     if (error) throw new ActionError(error.message, "execution_failed")
     return { invoiceId: input.invoiceId, status: "sent" }
+  },
+})
+
+export const recordInvoicePayment = defineAction({
+  name: "record_invoice_payment",
+  description:
+    "Record money received against an invoice. Partial payments are allowed; the invoice is marked " +
+    "paid automatically once the full amount is settled. Cannot exceed the outstanding balance.",
+  defaultMode: "approve",
+  minRole: "admin",
+  schema: z.object({
+    invoiceId: z.uuid(),
+    amount: z.number().positive("A payment must be greater than zero"),
+  }),
+  // Money moving in the ledger is a claim about the real world that an agent
+  // has no way to verify — it only ever sees a document saying so.
+  risk: () => "high",
+  amount: (i) => i.amount,
+  summarize: (i) => `Record payment of ${i.amount} against invoice`,
+  revalidate: ["/invoices", "/dashboard"],
+  async execute(ctx, input) {
+    // Guard the tenant boundary before calling the RPC: record_invoice_payment
+    // takes only an invoice id, and on the agent path there is no RLS to catch
+    // an id belonging to another org.
+    const { data: invoice, error: readError } = await ctx.db
+      .from("invoices")
+      .select("id")
+      .eq("id", input.invoiceId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle()
+
+    if (readError) throw new ActionError(readError.message, "execution_failed")
+    if (!invoice) throw new ActionError("Invoice not found", "invalid_input")
+
+    const { data, error } = await ctx.db.rpc("record_invoice_payment", {
+      p_invoice: input.invoiceId,
+      p_amount: input.amount,
+    })
+
+    if (error) throw new ActionError(error.message, "execution_failed")
+    return { invoiceId: input.invoiceId, amountPaid: data as unknown as number }
   },
 })

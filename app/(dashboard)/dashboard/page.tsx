@@ -14,28 +14,20 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { getUserContext, NoOrganizationError } from "@/lib/erp/actions/context"
-import { getDashboardMetrics, listLowStock } from "@/lib/erp/queries"
+import { formatDate, formatMoney } from "@/lib/erp/format"
+import { getDashboardMetrics, getOrganization, listLowStock } from "@/lib/erp/queries"
 import { formatQty } from "@/lib/erp/uom"
 import { cn } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
 
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-
-function myr(n: number): string {
-  return new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR" }).format(n)
-}
-
-/** "2026-04-18" → "18 Apr" */
-function shortDate(d: string): string {
-  const [, m, day] = d.split("-")
-  return `${day} ${MONTHS[parseInt(m, 10) - 1]}`
-}
-
-/** "2026-04-18" → "18 Apr 2026" */
-function fmtDate(d: string): string {
-  const [y, m, day] = d.split("-")
-  return `${day} ${MONTHS[parseInt(m, 10) - 1]} ${y}`
+/** "2026-04-18" → "18 Apr", in the org's locale. */
+function shortDate(d: string, org: { locale: string }): string {
+  return new Intl.DateTimeFormat(org.locale, {
+    day: "2-digit",
+    month: "short",
+    timeZone: "UTC",
+  }).format(new Date(`${d}T00:00:00Z`))
 }
 
 function StatCard({
@@ -72,6 +64,7 @@ function StatCard({
 export default async function DashboardPage() {
   let metrics
   let lowStock
+  let org
 
   try {
     const ctx = await getUserContext()
@@ -83,7 +76,11 @@ export default async function DashboardPage() {
 
     if ((productCount ?? 0) === 0) redirect("/onboarding")
 
-    ;[metrics, lowStock] = await Promise.all([getDashboardMetrics(ctx), listLowStock(ctx)])
+    ;[metrics, lowStock, org] = await Promise.all([
+      getDashboardMetrics(ctx),
+      listLowStock(ctx),
+      getOrganization(ctx),
+    ])
   } catch (err) {
     if (err instanceof NoOrganizationError) redirect("/onboarding")
     throw err
@@ -91,7 +88,7 @@ export default async function DashboardPage() {
 
   const chartData: ChartEntry[] = metrics.dailyRevenue.map((d) => ({
     date: d.date,
-    label: shortDate(d.date),
+    label: shortDate(d.date, org),
     revenue: d.revenue,
   }))
 
@@ -142,13 +139,13 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           title="Revenue (30d)"
-          value={myr(metrics.revenue)}
+          value={formatMoney(metrics.revenue, org)}
           icon={<TrendingUp className="size-5" />}
         />
         <StatCard
           title="Cost of goods sold"
-          value={myr(metrics.cogs)}
-          hint={`Purchases: ${myr(metrics.purchaseSpend)}`}
+          value={formatMoney(metrics.cogs, org)}
+          hint={`Purchases: ${formatMoney(metrics.purchaseSpend, org)}`}
           icon={<TrendingDown className="size-5" />}
         />
         {/*
@@ -158,7 +155,7 @@ export default async function DashboardPage() {
         */}
         <StatCard
           title="Gross margin"
-          value={myr(metrics.grossMargin)}
+          value={formatMoney(metrics.grossMargin, org)}
           hint={marginPct !== null ? `${marginPct}% of revenue` : undefined}
           icon={<Wallet className="size-5" />}
           valueClassName={metrics.grossMargin < 0 ? "text-destructive" : undefined}
@@ -193,8 +190,8 @@ export default async function DashboardPage() {
                   .reverse()
                   .map(({ date, revenue }) => (
                     <TableRow key={date}>
-                      <TableCell className="font-medium">{fmtDate(date)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{myr(revenue)}</TableCell>
+                      <TableCell className="font-medium">{formatDate(date, org)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatMoney(revenue, org)}</TableCell>
                     </TableRow>
                   ))
               )}
@@ -207,7 +204,7 @@ export default async function DashboardPage() {
         <h2 className="font-semibold">Revenue — last 7 days</h2>
         <Card>
           <CardContent className="pt-2 pb-2">
-            <RevenueChart data={chartData} />
+            <RevenueChart data={chartData} org={org} />
           </CardContent>
         </Card>
       </section>

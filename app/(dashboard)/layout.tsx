@@ -9,6 +9,10 @@ import {
   ShoppingCart,
   Settings,
   Users,
+  Building2,
+  Bot,
+  FileText,
+  Inbox,
   ClipboardList,
   ScanLine,
   BarChart3,
@@ -20,16 +24,59 @@ import {
 import { cn } from "@/lib/utils"
 import { getSupabaseClient } from "@/lib/supabase/client"
 
-const navItems = [
-  { href: "/dashboard",       label: "Dashboard", icon: LayoutDashboard },
-  { href: "/inventory",       label: "Inventory", icon: Package },
-  { href: "/sales",           label: "Sales",     icon: ShoppingCart },
-  { href: "/scanner",         label: "Scanner",   icon: ScanLine },
-  { href: "/suppliers",       label: "Suppliers", icon: Users },
-  { href: "/purchase-orders", label: "Orders",    icon: ClipboardList },
-  { href: "/reports",         label: "Reports",   icon: BarChart3 },
-  { href: "/settings",        label: "Settings",  icon: Settings },
+/**
+ * Grouped because there are now eleven destinations, and a flat list of eleven
+ * is a list nobody reads. "Orders" used to mean purchase orders; with sales
+ * orders in the product that name is ambiguous, so buying is now "Purchasing".
+ */
+const navGroups: {
+  label: string | null
+  items: { href: string; label: string; icon: typeof Package }[]
+}[] = [
+  {
+    label: null,
+    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
+  },
+  {
+    label: "Agents",
+    items: [
+      { href: "/inbox",  label: "Inbox",    icon: Inbox },
+      { href: "/agents", label: "Approvals", icon: Bot },
+    ],
+  },
+  {
+    label: "Sell",
+    items: [
+      { href: "/customers", label: "Customers", icon: Building2 },
+      { href: "/orders",    label: "Orders",    icon: ClipboardList },
+      { href: "/invoices",  label: "Invoices",  icon: FileText },
+    ],
+  },
+  {
+    label: "Stock",
+    items: [
+      { href: "/inventory", label: "Inventory", icon: Package },
+      { href: "/sales",     label: "Movements", icon: ShoppingCart },
+      { href: "/scanner",   label: "Scanner",   icon: ScanLine },
+    ],
+  },
+  {
+    label: "Buy",
+    items: [
+      { href: "/suppliers",       label: "Suppliers",  icon: Users },
+      { href: "/purchase-orders", label: "Purchasing", icon: ClipboardList },
+    ],
+  },
+  {
+    label: null,
+    items: [
+      { href: "/reports",  label: "Reports",  icon: BarChart3 },
+      { href: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ]
+
+const navItems = navGroups.flatMap((g) => g.items)
 
 export default function DashboardLayout({
   children,
@@ -64,25 +111,35 @@ export default function DashboardLayout({
         </div>
 
         {/* Nav links */}
-        <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-          {navItems.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-2 py-2 text-sm transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
-                )}
-              >
-                <Icon className="size-5 shrink-0" />
-                {!collapsed && <span className="truncate">{label}</span>}
-              </Link>
-            )
-          })}
+        <nav className="flex-1 overflow-y-auto py-3 px-2">
+          {navGroups.map((group, i) => (
+            <div key={group.label ?? `group-${i}`} className="space-y-0.5 not-first:mt-3">
+              {group.label && !collapsed && (
+                <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/40">
+                  {group.label}
+                </p>
+              )}
+              {group.items.map(({ href, label, icon: Icon }) => {
+                // startsWith so a detail page keeps its section highlighted.
+                const active = pathname === href || pathname.startsWith(`${href}/`)
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-2 py-2 text-sm transition-colors",
+                      active
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+                    )}
+                  >
+                    <Icon className="size-5 shrink-0" />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </Link>
+                )
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Bottom actions */}
@@ -126,17 +183,20 @@ export default function DashboardLayout({
         <main className="p-4 md:p-6">{children}</main>
       </div>
 
-      {/* Mobile bottom nav — visible only below md */}
-      <nav className="fixed bottom-0 inset-x-0 z-30 flex md:hidden border-t bg-sidebar safe-area-inset-bottom">
+      {/* Mobile bottom nav — visible only below md.
+          Eleven destinations will not fit across a phone, so this scrolls
+          horizontally rather than dropping items behind a "More" screen that
+          would put half the app two taps away. */}
+      <nav className="fixed bottom-0 inset-x-0 z-30 flex md:hidden overflow-x-auto border-t bg-sidebar safe-area-inset-bottom">
         {navItems.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href
+          const active = pathname === href || pathname.startsWith(`${href}/`)
           const isScanner = href === "/scanner"
           return (
             <Link
               key={href}
               href={href}
               className={cn(
-                "flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors",
+                "flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors",
                 isScanner
                   ? active
                     ? "text-primary"
@@ -147,13 +207,13 @@ export default function DashboardLayout({
               )}
             >
               <Icon className={isScanner ? "size-6" : "size-5"} />
-              <span>{label}</span>
+              <span className="truncate">{label}</span>
             </Link>
           )
         })}
         <button
           onClick={handleSignOut}
-          className="flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-sidebar-foreground/50 hover:text-destructive transition-colors"
+          className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-sidebar-foreground/50 hover:text-destructive transition-colors"
         >
           <LogOut className="size-5" />
           <span>Sign Out</span>

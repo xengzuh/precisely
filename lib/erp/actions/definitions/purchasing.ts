@@ -25,6 +25,23 @@ async function purchaseOrderTotal(ctx: ActionContext, orderId: string): Promise<
   return data?.total ?? null
 }
 
+/**
+ * receive_purchase_order takes only `p_order`, so nothing in the RPC restricts
+ * it to one tenant. RLS covers the signed-in path; agent runs use the service
+ * role and bypass RLS, so the check has to happen here. See CLAUDE.md rule 2.
+ */
+async function assertPurchaseOrderInOrg(ctx: ActionContext, orderId: string): Promise<void> {
+  const { data, error } = await ctx.db
+    .from("purchase_orders")
+    .select("id")
+    .eq("id", orderId)
+    .eq("org_id", ctx.orgId)
+    .maybeSingle()
+
+  if (error) throw new ActionError(error.message, "execution_failed")
+  if (!data) throw new ActionError("Purchase order not found", "invalid_input")
+}
+
 export const createPurchaseOrder = defineAction({
   name: "create_purchase_order",
   description:
@@ -96,6 +113,8 @@ export const receivePurchaseOrder = defineAction({
   summarize: () => "Receive purchase order into stock",
   revalidate: ["/purchase-orders", "/inventory", "/dashboard"],
   async execute(ctx, input) {
+    await assertPurchaseOrderInOrg(ctx, input.orderId)
+
     const { error } = await ctx.db.rpc("receive_purchase_order", { p_order: input.orderId })
     if (error) throw new ActionError(error.message, "execution_failed")
     return { orderId: input.orderId, status: "received" }
@@ -132,5 +151,6 @@ export const receivePurchaseOrder = defineAction({
       .from("purchase_order_lines")
       .update({ qty_received: 0 })
       .eq("order_id", result.orderId)
+      .eq("org_id", ctx.orgId)
   },
 })

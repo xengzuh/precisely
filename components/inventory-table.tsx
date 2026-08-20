@@ -136,7 +136,9 @@ export function InventoryTable({ products }: { products: ProductListItem[] }) {
                 return (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium">
-                      {p.name}
+                      <Link href={`/inventory/${p.id}`} className="hover:underline">
+                        {p.name}
+                      </Link>
                       {describe(p) && (
                         <span className="block text-xs font-normal text-muted-foreground">
                           {describe(p)}
