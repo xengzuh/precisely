@@ -13,6 +13,7 @@ import {
   Bot,
   FileText,
   Inbox,
+  MessageSquare,
   ClipboardList,
   ScanLine,
   BarChart3,
@@ -40,8 +41,9 @@ const navGroups: {
   {
     label: "Agents",
     items: [
-      { href: "/inbox",  label: "Inbox",    icon: Inbox },
-      { href: "/agents", label: "Approvals", icon: Bot },
+      { href: "/conversations", label: "Chats",     icon: MessageSquare },
+      { href: "/inbox",         label: "Inbox",     icon: Inbox },
+      { href: "/agents",        label: "Approvals", icon: Bot },
     ],
   },
   {

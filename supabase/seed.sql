@@ -168,7 +168,7 @@ begin
   insert into customers (org_id, name, email, phone, billing_address, delivery_address,
                          tax_id, payment_terms_days, credit_limit)
   values
-    (v_org, 'Acme Coatings Sdn Bhd', 'purchasing@acmecoatings.com.my', '+60 3-5566 1200',
+    (v_org, 'Acme Coatings Sdn Bhd', 'purchasing@acmecoatings.com.my', '+60 12-345 6789',
      'Lot 14, Jalan Perusahaan 3, 40150 Shah Alam, Selangor',
      'Lot 14, Jalan Perusahaan 3, 40150 Shah Alam, Selangor',
      'C12345678900', 30, 150000),

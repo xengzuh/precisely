@@ -4,7 +4,7 @@ import { z } from "zod"
 import {
   EFFORT,
   MAX_TOKENS,
-  MODEL,
+  modelFor,
   assertNotRefused,
   getAnthropic,
   outputConfig,
@@ -156,6 +156,8 @@ export type IntakeInput = {
   text?: string | null
   fromAddress?: string | null
   subject?: string | null
+  /** True when the message was forwarded, so a covering note may precede the order. */
+  isForward?: boolean
   /**
    * A customer already resolved from the sender address. Passing this turns
    * customer identification from a judgement into a lookup, and is what makes
@@ -209,6 +211,7 @@ export async function extractPurchaseOrder(
     }))
   )
 
+  const model = modelFor("extraction")
   const client = getAnthropic()
 
   const userContent: Anthropic.ContentBlockParam[] = []
@@ -225,6 +228,11 @@ export async function extractPurchaseOrder(
   const envelope = [
     input.fromAddress ? `From: ${input.fromAddress}` : null,
     input.subject ? `Subject: ${input.subject}` : null,
+    // A forwarded message often opens with a staff member's covering note
+    // ("please handle this"). That is not part of the order.
+    input.isForward
+      ? "This message was forwarded to you. Any covering note at the top was written by staff, not by the customer — extract only the customer's order."
+      : null,
     // Stated as settled fact, not a hint: the address was matched against the
     // customer record in code, which is stronger evidence than any company
     // name appearing in the body.
@@ -247,9 +255,9 @@ export async function extractPurchaseOrder(
   })
 
   const response = await client.messages.parse({
-    model: MODEL,
+    model,
     max_tokens: MAX_TOKENS,
-    output_config: outputConfig(EFFORT.extraction, zodOutputFormat(extraction)),
+    output_config: outputConfig(model, EFFORT.extraction, zodOutputFormat(extraction)),
     system: [
       { type: "text", text: SYSTEM },
       {
@@ -272,6 +280,6 @@ export async function extractPurchaseOrder(
 
   return {
     extraction: response.parsed_output,
-    usage: priceUsage(response.usage),
+    usage: priceUsage(response.usage, model),
   }
 }

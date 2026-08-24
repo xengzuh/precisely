@@ -138,3 +138,134 @@ export function isLikelyOrderAttachment(attachment: {
   }
   return true
 }
+
+/**
+ * Forward banners printed by the common clients.
+ *
+ * Outlook frequently prints none at all — just a bare From:/Sent:/To:/Subject:
+ * block that is structurally identical to its reply header. That case is
+ * caught by the subject line instead.
+ */
+const FORWARD_BANNERS: RegExp[] = [
+  /^[ \t]*-{2,}[ \t]*Forwarded message[ \t]*-{2,}[ \t]*$/im,
+  /^[ \t]*-{2,}[ \t]*Forwarded Message[ \t]*-{2,}[ \t]*$/im,
+  /^[ \t]*Begin forwarded message:[ \t]*$/im,
+]
+
+/** "FW: PO 4471", "Fwd: ...". A leading RE: means the last action was a reply. */
+const FORWARD_SUBJECT = /^\s*(fw|fwd)\s*:/i
+const REPLY_SUBJECT = /^\s*re\s*:/i
+
+const HEADER_LINE = /^[ \t]*(From|Sent|Date|To|Cc|Bcc|Subject|Reply-To)[ \t]*:/i
+
+/**
+ * Locate the header block a client writes when quoting a message, and read the
+ * original sender and subject out of it.
+ *
+ * Line-based rather than one large regex because the shape varies by client
+ * and a wrong match here silently attributes an order to the wrong company.
+ */
+function findForwardedHeaders(
+  lines: string[],
+  searchFrom = 0
+): { start: number; bodyStart: number; from: string | null; subject: string | null } | null {
+  for (let i = searchFrom; i < lines.length; i++) {
+    if (!/^[ \t]*From[ \t]*:/i.test(lines[i])) continue
+
+    // A lone "From:" proves nothing — a person can write it. A following
+    // Sent/Date/Subject line is what makes it a quoted header block.
+    const lookahead = lines.slice(i + 1, i + 7)
+    if (!lookahead.some((l) => /^[ \t]*(Sent|Date|Subject)[ \t]*:/i.test(l))) continue
+
+    let end = i
+    while (end < lines.length && (HEADER_LINE.test(lines[end]) || /^[ \t]+\S/.test(lines[end]))) {
+      end++
+    }
+
+    const block = lines.slice(i, end)
+    const fromLine = block.find((l) => /^[ \t]*From[ \t]*:/i.test(l))
+    const subjectLine = block.find((l) => /^[ \t]*Subject[ \t]*:/i.test(l))
+
+    let bodyStart = end
+    while (bodyStart < lines.length && lines[bodyStart].trim() === "") bodyStart++
+
+    return {
+      start: i,
+      bodyStart,
+      from: parseEmailAddress(fromLine?.replace(/^[ \t]*From[ \t]*:/i, "") ?? null),
+      subject: subjectLine?.replace(/^[ \t]*Subject[ \t]*:/i, "").trim() || null,
+    }
+  }
+
+  return null
+}
+
+export type MessageKind = "direct" | "reply" | "forward"
+
+export type ParsedBody = {
+  /** What the extractor should read. */
+  content: string
+  /** The original sender when this is a forward — the customer, not whoever forwarded it. */
+  forwardedFrom: string | null
+  /** The original subject, which usually carries the PO number. */
+  forwardedSubject: string | null
+  kind: MessageKind
+}
+
+/**
+ * Work out what part of a message is the order.
+ *
+ * The same marker means opposite things depending on the message: below
+ * "----- Original Message -----" on a reply is history to discard, while below
+ * "---------- Forwarded message ---------" is the order itself. Treating them
+ * alike — as this originally did — silently throws away every forwarded order.
+ *
+ * Forwarding is the intended way to hand this system an order, because the act
+ * of forwarding is a human saying "this one is real", which is triage no
+ * classifier does as well.
+ */
+export function parseMessageBody(
+  body: string | null | undefined,
+  subject?: string | null
+): ParsedBody {
+  const normalized = (body ?? "").replace(/\r\n/g, "\n")
+  if (!normalized.trim()) {
+    return { content: "", forwardedFrom: null, forwardedSubject: null, kind: "direct" }
+  }
+
+  const banner = FORWARD_BANNERS.map((re) => re.exec(normalized))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .sort((a, b) => a.index - b.index)[0]
+
+  const subjectSaysForward = FORWARD_SUBJECT.test(subject ?? "")
+
+  if (banner || subjectSaysForward) {
+    const searchIn = banner ? normalized.slice(banner.index + banner[0].length) : normalized
+    const lines = searchIn.split("\n")
+    const headers = findForwardedHeaders(lines)
+
+    const payload = headers ? lines.slice(headers.bodyStart).join("\n") : searchIn
+
+    // A forwarded thread can still carry its own quoted history below the
+    // order. Fall back rather than return nothing if that strips too hard.
+    const inner = stripQuotedReply(payload)
+    const content = inner.trim() || payload.trim() || normalized.trim()
+
+    return {
+      content,
+      // With no parsed sender, report none. The envelope From on a forward is
+      // whoever forwarded it — attributing an order to your own staff member
+      // is worse than attributing it to nobody.
+      forwardedFrom: headers?.from ?? null,
+      forwardedSubject: headers?.subject ?? null,
+      kind: "forward",
+    }
+  }
+
+  return {
+    content: stripQuotedReply(normalized),
+    forwardedFrom: null,
+    forwardedSubject: null,
+    kind: REPLY_SUBJECT.test(subject ?? "") ? "reply" : "direct",
+  }
+}

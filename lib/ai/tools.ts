@@ -44,14 +44,19 @@ async function invokeAction(
     // Hand validation and policy failures back as tool results rather than
     // throwing: the model can correct a bad argument on the next turn, and
     // killing the whole run over one rejected call loses the work so far.
-    if (err instanceof ActionError) {
-      return { ok: false, status: "error", error: `${err.code}: ${err.message}` }
-    }
-    return {
-      ok: false,
-      status: "error",
-      error: err instanceof Error ? err.message : "Unknown error",
-    }
+    // The model is told and can adapt, but a tool failing is an operational
+    // problem too — without this it is invisible, and the only symptom is an
+    // agent that vaguely says it could not look something up.
+    const message =
+      err instanceof ActionError
+        ? `${err.code}: ${err.message}`
+        : err instanceof Error
+          ? err.message
+          : "Unknown error"
+
+    console.error(`[tools] ${definition.name} failed:`, message)
+
+    return { ok: false, status: "error", error: message }
   }
 }
 

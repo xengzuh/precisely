@@ -1,3 +1,7 @@
+import {
+  discardCustomerMessage,
+  sendCustomerMessage,
+} from "./definitions/conversations"
 import { importProducts } from "./definitions/imports"
 import { setAutonomyPolicy, updateOrganization } from "./definitions/org"
 import { getCustomer, upsertCustomer, upsertSupplier } from "./definitions/parties"
@@ -55,6 +59,9 @@ const ACTIONS = [
   createInvoice,
   sendInvoice,
   recordInvoicePayment,
+  // Conversations
+  sendCustomerMessage,
+  discardCustomerMessage,
   // Purchasing
   createPurchaseOrder,
   receivePurchaseOrder,

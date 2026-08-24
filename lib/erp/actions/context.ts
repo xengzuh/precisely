@@ -58,6 +58,26 @@ export async function getUserContext(orgId?: string): Promise<ActionContext> {
 export async function getAgentContext(orgId: string, runId: string | null): Promise<ActionContext> {
   const service = getServiceClient(orgId)
 
+  // An org id that no longer exists surfaces much later as a foreign-key
+  // violation on an audit insert, which reads as a database bug rather than a
+  // stale setting. It is stale config nearly every time — rebuilding the
+  // database mints a new organization and leaves INBOUND_ORG_ID pointing at
+  // the old one.
+  const { data: org, error } = await service.unsafe
+    .from("organizations")
+    .select("id")
+    .eq("id", orgId)
+    .maybeSingle()
+
+  if (error) throw new ActionError(`Could not verify the organization: ${error.message}`, "forbidden")
+  if (!org) {
+    throw new ActionError(
+      `No organization with id ${orgId}. If you rebuilt the database, update INBOUND_ORG_ID — ` +
+        "the new organization has a new id.",
+      "forbidden"
+    )
+  }
+
   return {
     orgId,
     // Agents act with operator authority: enough to draft and move stock, not

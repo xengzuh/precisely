@@ -19,6 +19,22 @@ import Anthropic from "@anthropic-ai/sdk"
 export const MODEL = process.env.ANTHROPIC_MODEL?.trim() || "claude-opus-5"
 
 /**
+ * Model per job, because the two agents have opposite economics.
+ *
+ * Chat answers "do you stock X?" many times a day, and the customer is
+ * waiting — cheap and fast wins. Extraction runs a handful of times a day and
+ * each result becomes chemicals on a truck, so a couple of cents for a better
+ * product match is the easiest money in the system.
+ *
+ * ANTHROPIC_MODEL sets both; the per-task vars override it.
+ */
+export function modelFor(task: "chat" | "extraction"): string {
+  const override =
+    task === "chat" ? process.env.ANTHROPIC_MODEL_CHAT : process.env.ANTHROPIC_MODEL_EXTRACTION
+  return override?.trim() || MODEL
+}
+
+/**
  * Effort by task shape.
  *
  * Extraction is one structured call over a document — high is enough. Agent
@@ -28,6 +44,9 @@ export const MODEL = process.env.ANTHROPIC_MODEL?.trim() || "claude-opus-5"
 export const EFFORT = {
   extraction: "high",
   agent: "xhigh",
+  // Replying to a customer is a short loop — look something up, answer. The
+  // customer is waiting, so latency counts for more than extra deliberation.
+  chat: "medium",
 } as const
 
 /**
@@ -43,11 +62,12 @@ export function supportsEffort(model: string = MODEL): boolean {
 }
 
 export function outputConfig<TFormat>(
+  model: string,
   effort: (typeof EFFORT)[keyof typeof EFFORT],
   format?: TFormat
 ) {
   return {
-    ...(supportsEffort() ? { effort } : {}),
+    ...(supportsEffort(model) ? { effort } : {}),
     ...(format ? { format } : {}),
   }
 }

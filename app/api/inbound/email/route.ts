@@ -2,12 +2,20 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { processInboundDocument } from "@/lib/ai/agents/apply-intake"
 import { hasApiKey } from "@/lib/ai/client"
 import { getAgentContext } from "@/lib/erp/actions/context"
-import { isLikelyOrderAttachment, stripQuotedReply } from "@/lib/erp/email"
+import { isLikelyOrderAttachment, parseMessageBody } from "@/lib/erp/email"
 import { findCustomerByEmail } from "@/lib/erp/queries"
 import { getServiceClient } from "@/lib/supabase/service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+
+// Reading a document is a model call over the whole catalog and routinely takes
+// 10-30 seconds — well past the default serverless timeout, which would kill
+// the request mid-extraction. Vercel caps this by plan, so check yours.
+//
+// If the provider times out first and retries, the Message-ID check makes that
+// harmless: the replay is recognised and no second order is created.
+export const maxDuration = 60
 
 /**
  * Inbound email → draft sales order.
@@ -99,9 +107,16 @@ export async function POST(request: Request) {
   // as attachments. Paying per-page image tokens to read a logo buys nothing.
   const pdf = (payload.attachments ?? []).find(isLikelyOrderAttachment)
 
-  // Quoted history carries every previous order underneath this one. An
-  // extractor handed the whole thread can confidently pull last month's PO.
-  const text = stripQuotedReply(payload.text) || null
+  // Works out which part of the message is the order. On a reply, history
+  // below the marker is discarded; on a forward, that is where the order
+  // actually lives, and it also carries the real sender.
+  const parsed = parseMessageBody(payload.text, payload.subject)
+  const text = parsed.content || null
+
+  // On a forward the envelope From is whoever pressed Forward — a member of
+  // your own staff. The customer is the sender named in the forwarded header.
+  const senderHeader = parsed.kind === "forward" ? parsed.forwardedFrom : (payload.from ?? null)
+  const subject = parsed.forwardedSubject ?? payload.subject ?? null
 
   if (!pdf?.content && !text) {
     return new Response("Nothing to read: no PDF attachment and no text body", { status: 400 })
@@ -134,15 +149,16 @@ export async function POST(request: Request) {
     // The sender's address is an exact fact; a company name in the body is an
     // inference. Resolving here also unlocks that customer's learned aliases,
     // which are scoped per customer and would otherwise never apply.
-    const customer = await findCustomerByEmail(ctx, payload.from ?? null)
+    const customer = await findCustomerByEmail(ctx, senderHeader)
 
     const { data, error } = await service.unsafe
       .from("inbound_documents")
       .insert({
         org_id: orgId,
         source: "email",
-        from_address: payload.from ?? null,
-        subject: payload.subject ?? null,
+        // Record who the order is from, not who relayed it.
+        from_address: senderHeader ?? payload.from ?? null,
+        subject,
         mime: pdf ? "application/pdf" : "text/plain",
         message_id: messageId,
         body_text: text,
@@ -162,8 +178,9 @@ export async function POST(request: Request) {
     const outcome = await processInboundDocument(ctx, data.id, {
       pdfBase64: pdf?.content ?? null,
       text,
-      fromAddress: payload.from ?? null,
-      subject: payload.subject ?? null,
+      fromAddress: senderHeader,
+      subject,
+      isForward: parsed.kind === "forward",
       knownCustomer: customer ? { id: customer.id, name: customer.name } : null,
     })
 

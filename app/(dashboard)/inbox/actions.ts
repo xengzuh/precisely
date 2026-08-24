@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache"
 import { processInboundDocument, type IntakeOutcome } from "@/lib/ai/agents/apply-intake"
 import { hasApiKey } from "@/lib/ai/client"
 import { getUserContext } from "@/lib/erp/actions/context"
-import { stripQuotedReply } from "@/lib/erp/email"
+import { parseMessageBody } from "@/lib/erp/email"
 import { findCustomerByEmail } from "@/lib/erp/queries"
 import { getServiceClient } from "@/lib/supabase/service"
 
@@ -29,10 +29,14 @@ export async function submitDocument(formData: FormData): Promise<IntakeOutcome>
 
   const file = formData.get("file")
   // Text pasted from a mail client carries the same quoted history a webhook
-  // delivery does, and the same risk of extracting a previous order from it.
-  const text = stripQuotedReply(formData.get("text") as string | null) || null
-  const fromAddress = (formData.get("fromAddress") as string | null)?.trim() || null
-  const subject = (formData.get("subject") as string | null)?.trim() || null
+  // delivery does — and if someone pastes a forwarded message, the order is
+  // below the marker rather than above it.
+  const rawSubject = (formData.get("subject") as string | null)?.trim() || null
+  const parsed = parseMessageBody(formData.get("text") as string | null, rawSubject)
+  const text = parsed.content || null
+  const subject = parsed.forwardedSubject ?? rawSubject
+  const fromAddress =
+    parsed.forwardedFrom ?? (formData.get("fromAddress") as string | null)?.trim() ?? null
 
   let pdfBase64: string | null = null
   let mime: string | null = null
@@ -84,6 +88,7 @@ export async function submitDocument(formData: FormData): Promise<IntakeOutcome>
     text,
     fromAddress,
     subject,
+    isForward: parsed.kind === "forward",
     knownCustomer: customer ? { id: customer.id, name: customer.name } : null,
   })
 

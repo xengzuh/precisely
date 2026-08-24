@@ -13,7 +13,16 @@ import { NextResponse, type NextRequest } from "next/server"
  * Every other /api route stays behind the session check on purpose — the
  * report and invoice PDF routes serve tenant data to a signed-in user.
  */
-const PUBLIC_PREFIXES = ["/api/inbound/"]
+const PUBLIC_PREFIXES = [
+  "/api/inbound/",
+  // Every provider webhook must be listed here. Forget one and the provider
+  // gets a 307 to the login page, which it reports as a verification failure
+  // or, worse, treats as a successful delivery of a message nobody processed.
+  "/api/whatsapp",
+  // Dev-only scratch endpoints. The routes themselves also 404 in production,
+  // so this is the second of two locks rather than the only one.
+  ...(process.env.NODE_ENV !== "production" ? ["/api/dev/"] : []),
+]
 
 export async function proxy(request: NextRequest) {
   if (PUBLIC_PREFIXES.some((prefix) => request.nextUrl.pathname.startsWith(prefix))) {

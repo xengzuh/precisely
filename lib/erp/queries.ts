@@ -1,6 +1,11 @@
 import type { ActionContext } from "@/lib/erp/actions/types"
 import { emailDomain, isFreemailDomain, parseEmailAddress } from "@/lib/erp/email"
 import type {
+  ConversationMessageRow,
+  ConversationRow,
+  ConversationStatus,
+} from "@/types/database"
+import type {
   AgentActionRow,
   AgentRunRow,
   AutonomyPolicyRow,
@@ -523,6 +528,91 @@ export async function listAutonomyPolicies(
 
   if (error) throw new Error(error.message)
   return data ?? []
+}
+
+export type ConversationListItem = {
+  id: string
+  externalId: string
+  displayName: string | null
+  customerName: string | null
+  status: ConversationStatus
+  lastMessageAt: string
+  windowExpiresAt: string | null
+  lastMessage: string | null
+  pendingDrafts: number
+}
+
+export async function listConversations(ctx: ActionContext): Promise<ConversationListItem[]> {
+  const { data, error } = await ctx.db
+    .from("conversations")
+    .select(
+      "id, external_id, display_name, status, last_message_at, window_expires_at, customers(name), conversation_messages(body, status, direction, created_at)"
+    )
+    .eq("org_id", ctx.orgId)
+    .order("last_message_at", { ascending: false })
+    .limit(100)
+
+  if (error) throw new Error(error.message)
+
+  return (data ?? []).map((c) => {
+    const messages = (c.conversation_messages ?? [])
+      .slice()
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+    return {
+      id: c.id,
+      externalId: c.external_id,
+      displayName: c.display_name,
+      customerName: c.customers?.name ?? null,
+      status: c.status,
+      lastMessageAt: c.last_message_at,
+      windowExpiresAt: c.window_expires_at,
+      lastMessage: messages.at(-1)?.body ?? null,
+      pendingDrafts: messages.filter((m) => m.status === "drafted").length,
+    }
+  })
+}
+
+export type ConversationThread = ConversationRow & {
+  customerName: string | null
+  messages: ConversationMessageRow[]
+}
+
+export async function getConversation(
+  ctx: ActionContext,
+  conversationId: string
+): Promise<ConversationThread | null> {
+  const { data, error } = await ctx.db
+    .from("conversations")
+    .select("*, customers(name), conversation_messages(*)")
+    .eq("id", conversationId)
+    .eq("org_id", ctx.orgId)
+    .maybeSingle()
+
+  if (error) throw new Error(error.message)
+  if (!data) return null
+
+  const { customers, conversation_messages, ...conversation } = data
+
+  return {
+    ...conversation,
+    customerName: customers?.name ?? null,
+    messages: (conversation_messages ?? [])
+      .slice()
+      .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+  }
+}
+
+/** Count for the nav badge — how many replies are waiting on a person. */
+export async function countPendingDrafts(ctx: ActionContext): Promise<number> {
+  const { count, error } = await ctx.db
+    .from("conversation_messages")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", ctx.orgId)
+    .eq("status", "drafted")
+
+  if (error) throw new Error(error.message)
+  return count ?? 0
 }
 
 export type DashboardMetrics = {

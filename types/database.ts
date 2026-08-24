@@ -359,6 +359,59 @@ export type InboundDocumentRow = {
   created_at: string
 }
 
+export type ConversationChannel = "whatsapp" | "test"
+export type ConversationStatus = "open" | "waiting_human" | "closed"
+export type MessageDirection = "inbound" | "outbound"
+export type MessageStatus =
+  | "received"
+  | "drafted"
+  | "approved"
+  | "sent"
+  | "failed"
+  | "discarded"
+export type MessageIntent =
+  | "availability"
+  | "stock_check"
+  | "pricing"
+  | "restock"
+  | "order"
+  | "regulatory"
+  | "smalltalk"
+  | "other"
+
+export type ConversationRow = {
+  id: string
+  org_id: string
+  channel: ConversationChannel
+  external_id: string
+  display_name: string | null
+  customer_id: string | null
+  status: ConversationStatus
+  window_expires_at: string | null
+  last_message_at: string
+  created_at: string
+}
+
+export type ConversationMessageRow = {
+  id: string
+  org_id: string
+  conversation_id: string
+  direction: MessageDirection
+  status: MessageStatus
+  body: string
+  intent: MessageIntent | null
+  would_auto_send: boolean
+  needs_human: boolean
+  reason: string | null
+  external_id: string | null
+  agent_run_id: string | null
+  approved_by: string | null
+  approved_at: string | null
+  sent_at: string | null
+  error: string | null
+  created_at: string
+}
+
 export type CustomerProductAliasRow = {
   id: string
   org_id: string
@@ -633,6 +686,37 @@ export type Database = {
         | "error"
         | "created_by"
         | "created_at"
+      >
+      conversations: Table<
+        ConversationRow,
+        | "id"
+        | "channel"
+        | "display_name"
+        | "customer_id"
+        | "status"
+        | "window_expires_at"
+        | "last_message_at"
+        | "created_at",
+        [Rel<"conversations_customer_id_fkey", "customer_id", "customers">]
+      >
+      conversation_messages: Table<
+        ConversationMessageRow,
+        | "id"
+        | "status"
+        | "intent"
+        | "would_auto_send"
+        | "needs_human"
+        | "reason"
+        | "external_id"
+        | "agent_run_id"
+        | "approved_by"
+        | "approved_at"
+        | "sent_at"
+        | "error"
+        | "created_at",
+        [
+          Rel<"conversation_messages_conversation_id_fkey", "conversation_id", "conversations">,
+        ]
       >
       customer_product_aliases: Table<
         CustomerProductAliasRow,

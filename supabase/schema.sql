@@ -598,6 +598,88 @@ create table customer_product_aliases (
 create index customer_product_aliases_lookup_idx
   on customer_product_aliases (org_id, customer_id, lower(raw_text));
 
+
+-- ── Conversations ───────────────────────────────────────────────────────────
+--
+-- Customers reach a distributor on WhatsApp, not through a web form. A
+-- conversation is one thread with one contact; the customer_id is resolved
+-- from the phone number where possible, and stays null when the number is not
+-- on file — an unknown contact is still worth talking to.
+
+create table conversations (
+  id            uuid primary key default gen_random_uuid(),
+  org_id        uuid not null references organizations(id) on delete cascade,
+  channel       text not null default 'whatsapp' check (channel in ('whatsapp', 'test')),
+  -- The contact's address on that channel. For WhatsApp this is the wa_id,
+  -- which is the phone number in international form without a plus.
+  external_id   text not null,
+  display_name  text,
+  customer_id   uuid references customers(id) on delete set null,
+  status        text not null default 'open'
+                check (status in ('open', 'waiting_human', 'closed')),
+  -- WhatsApp only allows free-form replies for 24 hours after the customer's
+  -- last message. Past that, a pre-approved template is required, so knowing
+  -- when the window shuts decides whether a reply can be sent at all.
+  window_expires_at timestamptz,
+  last_message_at   timestamptz not null default now(),
+  created_at    timestamptz not null default now(),
+
+  unique (org_id, channel, external_id)
+);
+
+create index conversations_org_activity_idx
+  on conversations (org_id, last_message_at desc);
+
+create table conversation_messages (
+  id              uuid primary key default gen_random_uuid(),
+  org_id          uuid not null references organizations(id) on delete cascade,
+  conversation_id uuid not null references conversations(id) on delete cascade,
+  direction       text not null check (direction in ('inbound', 'outbound')),
+
+  -- An outbound message is drafted before it is sent. Nothing reaches a
+  -- customer without passing through 'approved', so the agent can never say
+  -- something nobody chose to say.
+  status          text not null default 'received'
+                  check (status in ('received', 'drafted', 'approved', 'sent',
+                                    'failed', 'discarded')),
+  body            text not null,
+
+  -- What the customer was asking for. Drives how much autonomy the reply gets:
+  -- availability questions are safe to answer from live data, prices and
+  -- delivery promises are commitments, and regulatory questions are never
+  -- answered by a model at all.
+  intent          text check (intent in ('availability', 'stock_check', 'pricing',
+                                         'restock', 'order', 'regulatory',
+                                         'smalltalk', 'other')),
+  -- Whether the policy would have let this send itself. Recorded even while
+  -- everything is drafted, so the split can be judged on real traffic before
+  -- any of it is switched on.
+  would_auto_send boolean not null default false,
+  needs_human     boolean not null default true,
+  reason          text,
+
+  -- The provider's message id, for deduplicating webhook retries.
+  external_id     text,
+  agent_run_id    uuid references agent_runs(id) on delete set null,
+  approved_by     uuid references auth.users(id),
+  approved_at     timestamptz,
+  sent_at         timestamptz,
+  error           text,
+  created_at      timestamptz not null default now()
+);
+
+create index conversation_messages_thread_idx
+  on conversation_messages (conversation_id, created_at);
+
+create index conversation_messages_pending_idx
+  on conversation_messages (org_id, status, created_at)
+  where status = 'drafted';
+
+-- Providers retry deliveries; without this one message becomes several.
+create unique index conversation_messages_external_idx
+  on conversation_messages (org_id, external_id)
+  where external_id is not null;
+
 -- ── updated_at maintenance ──────────────────────────────────────────────────
 
 create or replace function touch_updated_at()
@@ -669,7 +751,7 @@ begin
     'customers', 'suppliers', 'sales_orders', 'sales_order_lines',
     'purchase_orders', 'purchase_order_lines', 'invoices', 'invoice_lines',
     'agent_runs', 'agent_actions', 'autonomy_policies', 'inbound_documents',
-    'customer_product_aliases'
+    'customer_product_aliases', 'conversations', 'conversation_messages'
   ]
   loop
     execute format(
