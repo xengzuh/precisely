@@ -61,7 +61,7 @@ export async function getAgentContext(orgId: string, runId: string | null): Prom
   // An org id that no longer exists surfaces much later as a foreign-key
   // violation on an audit insert, which reads as a database bug rather than a
   // stale setting. It is stale config nearly every time — rebuilding the
-  // database mints a new organization and leaves INBOUND_ORG_ID pointing at
+  // database mints a new organization and leaves AGENT_ORG_ID pointing at
   // the old one.
   const { data: org, error } = await service.unsafe
     .from("organizations")
@@ -72,7 +72,7 @@ export async function getAgentContext(orgId: string, runId: string | null): Prom
   if (error) throw new ActionError(`Could not verify the organization: ${error.message}`, "forbidden")
   if (!org) {
     throw new ActionError(
-      `No organization with id ${orgId}. If you rebuilt the database, update INBOUND_ORG_ID — ` +
+      `No organization with id ${orgId}. If you rebuilt the database, update AGENT_ORG_ID — ` +
         "the new organization has a new id.",
       "forbidden"
     )

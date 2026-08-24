@@ -77,12 +77,12 @@ function verify(rawBody: string, signature: string | null, secret: string): bool
 
 export async function POST(request: Request) {
   const secret = process.env.INBOUND_WEBHOOK_SECRET
-  const orgId = process.env.INBOUND_ORG_ID
+  const orgId = process.env.AGENT_ORG_ID
 
   if (!secret || !orgId) {
     // Not an error the caller can fix — say so plainly rather than 500ing.
     return new Response(
-      "Inbound email is not configured. Set INBOUND_WEBHOOK_SECRET and INBOUND_ORG_ID.",
+      "Inbound email is not configured. Set INBOUND_WEBHOOK_SECRET (email only) and AGENT_ORG_ID.",
       { status: 501 }
     )
   }

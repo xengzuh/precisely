@@ -28,9 +28,9 @@ export async function POST(request: Request) {
       return new Response("Nothing to reply to", { status: 400 })
     }
 
-    const orgId = process.env.INBOUND_ORG_ID
+    const orgId = process.env.AGENT_ORG_ID
     if (!orgId) {
-      return new Response("Set INBOUND_ORG_ID in .env.local to use this endpoint", { status: 501 })
+      return new Response("Set AGENT_ORG_ID in .env.local to use this endpoint", { status: 501 })
     }
 
     // The org that unattended agent work belongs to — same setting the inbound

@@ -64,7 +64,7 @@ function acknowledge(providerName: string): Response {
 
 export async function POST(request: Request) {
   const provider = getWhatsAppProvider()
-  const orgId = process.env.INBOUND_ORG_ID
+  const orgId = process.env.AGENT_ORG_ID
 
   if (!provider) {
     return new Response(
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       { status: 501 }
     )
   }
-  if (!orgId) return new Response("INBOUND_ORG_ID is not set", { status: 501 })
+  if (!orgId) return new Response("AGENT_ORG_ID is not set", { status: 501 })
   if (!hasApiKey()) return new Response("ANTHROPIC_API_KEY is not set", { status: 501 })
 
   const rawBody = await request.text()
