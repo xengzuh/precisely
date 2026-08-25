@@ -25,6 +25,7 @@ export function OrganizationForm({ org }: { org: OrganizationRow }) {
   const [taxPct, setTaxPct] = useState(String(org.tax_rate * 100))
   const [taxLabel, setTaxLabel] = useState(org.tax_label)
   const [locale, setLocale] = useState(org.locale)
+  const [autoReply, setAutoReply] = useState(org.whatsapp_auto_reply)
   const [saving, setSaving] = useState(false)
 
   const pctNum = Number(taxPct)
@@ -43,6 +44,7 @@ export function OrganizationForm({ org }: { org: OrganizationRow }) {
         taxRate: pctNum / 100,
         taxLabel: taxLabel.trim(),
         locale: locale.trim(),
+        whatsappAutoReply: autoReply,
       })
       toast.success("Settings saved")
       router.refresh()
@@ -125,6 +127,33 @@ export function OrganizationForm({ org }: { org: OrganizationRow }) {
           Changing the tax rate affects orders raised from now on. Totals already stored on past
           orders and invoices stay as they were issued.
         </p>
+
+        <div className="space-y-2 rounded-lg border p-3">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 rounded border-input accent-primary"
+              checked={autoReply}
+              onChange={(e) => setAutoReply(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">Let the assistant reply on WhatsApp</span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                When off, every reply waits for someone to approve it. When on, replies to
+                questions of fact — what you stock, what is in stock — go out immediately.
+                Prices, delivery dates, orders and anything about safety still wait for a
+                person, whatever this is set to.
+              </span>
+            </span>
+          </label>
+
+          {autoReply && (
+            <p className="text-xs text-amber-700">
+              Customers will receive replies nobody has read. Turn this off here to stop it
+              immediately — it takes effect on the next message.
+            </p>
+          )}
+        </div>
 
         <div>
           <Button disabled={saving} onClick={save}>

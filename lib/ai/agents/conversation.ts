@@ -2,6 +2,7 @@ import { draftReply, type Turn } from "@/lib/ai/agents/whatsapp"
 import { withRun } from "@/lib/ai/run"
 import type { ActionContext } from "@/lib/erp/actions/types"
 import { phoneKey } from "@/lib/erp/phone"
+import { getWhatsAppProvider } from "@/lib/whatsapp"
 import { getServiceClient } from "@/lib/supabase/service"
 import type { ConversationChannel, ConversationRow } from "@/types/database"
 
@@ -18,6 +19,19 @@ const WINDOW_HOURS = 24
 
 /** Enough history for context without resending a year of chat every turn. */
 const HISTORY_LIMIT = 20
+
+/** Whether this organization lets the assistant answer without a person. */
+async function autoReplyEnabled(ctx: ActionContext): Promise<boolean> {
+  const { data } = await ctx.db
+    .from("organizations")
+    .select("whatsapp_auto_reply")
+    .eq("id", ctx.orgId)
+    .maybeSingle()
+
+  // Absent or unreadable means off. Failing closed is the only safe default
+  // for something that talks to customers.
+  return data?.whatsapp_auto_reply ?? false
+}
 
 async function resolveCustomer(ctx: ActionContext, phone: string): Promise<string | null> {
   const key = phoneKey(phone)
@@ -153,20 +167,60 @@ export async function receiveMessage(
         const history = await loadHistory(ctx, conversation.id)
         const reply = await draftReply(ctx, { history })
 
+        // Four separate conditions have to hold before the assistant answers a
+        // customer unattended. Each one is a different way this could go wrong,
+        // so none of them is folded into another.
+        const autoReplyOn = await autoReplyEnabled(ctx)
+        const provider = getWhatsAppProvider()
+        const windowOpen =
+          conversation.window_expires_at === null ||
+          new Date(conversation.window_expires_at) > new Date()
+
+        const shouldSend =
+          reply.wouldAutoSend && autoReplyOn && provider !== null && windowOpen
+
+        let status: "drafted" | "sent" = "drafted"
+        let externalId: string | null = null
+        let sendError: string | null = null
+
+        if (shouldSend && provider) {
+          try {
+            const sent = await provider.send({
+              to: conversation.external_id,
+              body: reply.draft.message,
+            })
+            externalId = sent.externalId
+            status = "sent"
+          } catch (err) {
+            // Falling back to a draft rather than failing: the customer is
+            // waiting, and a reply a person can retry beats one that vanished.
+            sendError = err instanceof Error ? err.message : "Unknown error"
+            console.error("[conversation] auto-reply failed to send:", sendError)
+          }
+        }
+
         const { data: draft, error: draftError } = await service.unsafe
           .from("conversation_messages")
           .insert({
             org_id: ctx.orgId,
             conversation_id: conversation.id,
             direction: "outbound",
-            status: "drafted",
+            status,
             body: reply.draft.message,
             intent: reply.draft.intent,
             would_auto_send: reply.wouldAutoSend,
-            needs_human: true,
-            reason: reply.mustEscalate
-              ? `Escalated: ${reply.policyReason}`
-              : reply.draft.reason,
+            // Sent already means nobody needs to look at it; a draft still does.
+            needs_human: status === "drafted",
+            reason: sendError
+              ? `Auto-reply failed, left as a draft: ${sendError}`
+              : reply.mustEscalate
+                ? `Escalated: ${reply.policyReason}`
+                : reply.draft.reason,
+            // No approved_by: this went out on the agent's own authority, and
+            // the ledger should not imply a person signed it off.
+            sent_at: status === "sent" ? new Date().toISOString() : null,
+            external_id: externalId,
+            error: sendError,
             agent_run_id: runId,
           })
           .select("id")

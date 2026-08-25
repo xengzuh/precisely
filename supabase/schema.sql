@@ -39,6 +39,14 @@ create table organizations (
   country     text not null default 'MY',
   locale      text not null default 'en-MY',
   timezone    text not null default 'Asia/Kuala_Lumpur',
+
+  -- Whether the assistant may answer customers on WhatsApp without a person
+  -- reading the reply first. Off by default, and deliberately a row in the
+  -- database rather than an environment variable: when an assistant starts
+  -- saying the wrong thing to customers, the switch has to be immediate, not
+  -- a redeploy away.
+  whatsapp_auto_reply boolean not null default false,
+
   created_at  timestamptz not null default now()
 );
 

@@ -76,10 +76,11 @@ export const updateOrganization = defineAction({
       .max(1, "Enter the rate as a fraction — 0.06 for 6%"),
     taxLabel: z.string().trim().min(1, "Give the tax a name, e.g. SST"),
     locale: z.string().trim().min(2, "e.g. en-MY"),
+    whatsappAutoReply: z.boolean().default(false),
   }),
   risk: () => "medium",
   summarize: (i) => `Update organization settings for ${i.name}`,
-  revalidate: ["/settings", "/dashboard", "/invoices", "/orders"],
+  revalidate: ["/settings", "/dashboard", "/invoices", "/orders", "/conversations"],
   async execute(ctx, input) {
     const { error } = await ctx.db
       .from("organizations")
@@ -89,6 +90,7 @@ export const updateOrganization = defineAction({
         tax_rate: input.taxRate,
         tax_label: input.taxLabel,
         locale: input.locale,
+        whatsapp_auto_reply: input.whatsappAutoReply,
       })
       .eq("id", ctx.orgId)
 

@@ -10,6 +10,7 @@ export async function saveOrganization(input: {
   taxRate: number
   taxLabel: string
   locale: string
+  whatsappAutoReply: boolean
 }) {
   await invoke(updateOrganization, input)
 }

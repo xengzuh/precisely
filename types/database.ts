@@ -66,6 +66,7 @@ export type OrganizationRow = {
   country: string
   locale: string
   timezone: string
+  whatsapp_auto_reply: boolean
   created_at: string
 }
 
@@ -450,7 +451,15 @@ export type Database = {
     Tables: {
       organizations: Table<
         OrganizationRow,
-        "id" | "currency" | "tax_rate" | "tax_label" | "country" | "locale" | "timezone" | "created_at"
+        | "id"
+        | "currency"
+        | "tax_rate"
+        | "tax_label"
+        | "country"
+        | "locale"
+        | "timezone"
+        | "whatsapp_auto_reply"
+        | "created_at"
       >
       memberships: Table<MembershipRow, "role" | "created_at">
       document_sequences: Table<DocumentSequenceRow, "next_value">
