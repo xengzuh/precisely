@@ -7,11 +7,13 @@ import { getServiceClient } from "@/lib/supabase/service"
 import type { ConversationChannel, ConversationRow } from "@/types/database"
 
 /**
- * Receiving a customer message and drafting an answer.
+ * Receiving a customer message and answering it.
  *
- * Everything a customer sends and everything drafted in reply is persisted
+ * Everything a customer sends and everything written in reply is persisted
  * before it is acted on, so a conversation is reviewable after the fact rather
- * than existing only inside one request.
+ * than existing only inside one request. That applies to orders too: an order
+ * the assistant takes is a row in `sales_orders` and a row in `agent_actions`
+ * before the customer is told anything about it.
  */
 
 /** WhatsApp allows free-form replies for 24 hours after the customer writes. */
@@ -31,6 +33,23 @@ async function autoReplyEnabled(ctx: ActionContext): Promise<boolean> {
   // Absent or unreadable means off. Failing closed is the only safe default
   // for something that talks to customers.
   return data?.whatsapp_auto_reply ?? false
+}
+
+/** So the assistant can greet an account by name rather than by phone number. */
+async function customerNameFor(
+  ctx: ActionContext,
+  customerId: string | null
+): Promise<string | null> {
+  if (!customerId) return null
+
+  const { data } = await ctx.db
+    .from("customers")
+    .select("name")
+    .eq("id", customerId)
+    .eq("org_id", ctx.orgId)
+    .maybeSingle()
+
+  return data?.name ?? null
 }
 
 async function resolveCustomer(ctx: ActionContext, phone: string): Promise<string | null> {
@@ -87,15 +106,18 @@ export type InboundResult = {
   conversationId: string
   inboundMessageId: string
   draftMessageId: string | null
-  status: "drafted" | "duplicate" | "failed"
+  status: "sent" | "drafted" | "duplicate" | "failed"
+  /** The draft sales order the assistant wrote from this message, if any. */
+  orderId: string | null
   error: string | null
 }
 
 /**
- * Record an inbound message and draft a reply to it.
+ * Record an inbound message and answer it.
  *
- * The draft is stored, never sent. Nothing reaches a customer until a person
- * approves it — which is the whole point of running this way first.
+ * The reply is always written down first and only then, if every condition
+ * below holds, sent. Anything that fails one of them stays a draft for a person
+ * — including a send that errored, so a reply is never lost, only delayed.
  */
 export async function receiveMessage(
   ctx: ActionContext,
@@ -125,6 +147,7 @@ export async function receiveMessage(
         inboundMessageId: seen.id,
         draftMessageId: null,
         status: "duplicate",
+        orderId: null,
         error: null,
       }
     }
@@ -165,7 +188,20 @@ export async function receiveMessage(
       { orgId: ctx.orgId, agent: "whatsapp", trigger: "api", inputRef: inbound.id },
       async (runId) => {
         const history = await loadHistory(ctx, conversation.id)
-        const reply = await draftReply(ctx, { history })
+        const customerName = await customerNameFor(ctx, conversation.customer_id)
+
+        // `runId` matters here: anything the assistant writes during this turn
+        // is audited against the run that produced it, not orphaned.
+        const reply = await draftReply(
+          { ...ctx, runId },
+          {
+            history,
+            answering: input.body,
+            conversationId: conversation.id,
+            customerId: conversation.customer_id,
+            customerName: customerName ?? conversation.display_name,
+          }
+        )
 
         // Four separate conditions have to hold before the assistant answers a
         // customer unattended. Each one is a different way this could go wrong,
@@ -199,6 +235,24 @@ export async function receiveMessage(
           }
         }
 
+        // An order the assistant wrote has to be findable from the thread it
+        // came out of. There is no column for it, and `reason` is what the
+        // reviewer already reads.
+        const orderNote = reply.recordedOrder
+          ? `Recorded draft order ${reply.recordedOrder.orderNo ?? reply.recordedOrder.orderId}`
+          : null
+
+        const reason = [
+          orderNote,
+          sendError
+            ? `Auto-reply failed, left as a draft: ${sendError}`
+            : reply.mustEscalate
+              ? `Escalated: ${reply.policyReason}`
+              : reply.draft.reason,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+
         const { data: draft, error: draftError } = await service.unsafe
           .from("conversation_messages")
           .insert({
@@ -211,11 +265,7 @@ export async function receiveMessage(
             would_auto_send: reply.wouldAutoSend,
             // Sent already means nobody needs to look at it; a draft still does.
             needs_human: status === "drafted",
-            reason: sendError
-              ? `Auto-reply failed, left as a draft: ${sendError}`
-              : reply.mustEscalate
-                ? `Escalated: ${reply.policyReason}`
-                : reply.draft.reason,
+            reason,
             // No approved_by: this went out on the agent's own authority, and
             // the ledger should not imply a person signed it off.
             sent_at: status === "sent" ? new Date().toISOString() : null,
@@ -243,7 +293,8 @@ export async function receiveMessage(
             conversationId: conversation.id,
             inboundMessageId: inbound.id,
             draftMessageId: draft.id,
-            status: "drafted" as const,
+            status,
+            orderId: reply.recordedOrder?.orderId ?? null,
             error: null,
           },
           usage: reply.usage,
@@ -266,6 +317,7 @@ export async function receiveMessage(
       inboundMessageId: inbound.id,
       draftMessageId: null,
       status: "failed",
+      orderId: null,
       error: message,
     }
   }
@@ -280,7 +332,7 @@ async function loadHistory(ctx: ActionContext, conversationId: string): Promise<
     .order("created_at", { ascending: false })
     .limit(HISTORY_LIMIT)
 
-  return (data ?? [])
+  const turns = (data ?? [])
     .reverse()
     // Only what the customer actually saw. A discarded draft never existed as
     // far as they are concerned, and feeding it back would have the assistant
@@ -290,4 +342,21 @@ async function loadHistory(ctx: ActionContext, conversationId: string): Promise<
       role: m.direction === "inbound" ? ("user" as const) : ("assistant" as const),
       content: m.body,
     }))
+
+  // Collapse runs of the same speaker into one turn.
+  //
+  // Every gated or failed reply leaves a gap: the customer writes again with
+  // nothing from us in between, and the API merges those into a single turn
+  // regardless. Merging them here at least makes the order visible, so the
+  // newest line reads last instead of dissolving into the one before it —
+  // which is how a question about caustic soda gets answered with gloves.
+  return turns.reduce<Turn[]>((merged, turn) => {
+    const previous = merged[merged.length - 1]
+    if (previous?.role === turn.role) {
+      previous.content = `${previous.content}\n${turn.content}`
+      return merged
+    }
+    merged.push({ ...turn })
+    return merged
+  }, [])
 }

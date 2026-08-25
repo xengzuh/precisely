@@ -15,6 +15,34 @@ describe("replyPolicy", () => {
     expect(replyPolicy("order").wouldAutoSend).toBe(false)
   })
 
+  it("lets an order reply through once the order is actually on record", () => {
+    // The reply stops being a promise and becomes a receipt for a draft row a
+    // colleague is about to confirm.
+    const decision = replyPolicy("order", { orderRecorded: true })
+    expect(decision.wouldAutoSend).toBe(true)
+    expect(decision.mustEscalate).toBe(false)
+  })
+
+  it("still holds an order reply back when nothing was recorded", () => {
+    // No order written means the assistant is improvising about a commercial
+    // request — an unknown caller, or a product it could not pin down.
+    expect(replyPolicy("order", { orderRecorded: false }).wouldAutoSend).toBe(false)
+    expect(replyPolicy("order", {}).wouldAutoSend).toBe(false)
+  })
+
+  it("does not let a recorded order unlock any other intent", () => {
+    // The exemption is about what an order reply *says*, not a general licence.
+    // A price is still an offer even on a turn that wrote an order down.
+    for (const intent of ["pricing", "restock", "regulatory", "other"] as const) {
+      expect(replyPolicy(intent, { orderRecorded: true }).wouldAutoSend).toBe(false)
+    }
+    expect(replyPolicy(null, { orderRecorded: true }).wouldAutoSend).toBe(false)
+  })
+
+  it("never lets a recorded order downgrade a regulatory escalation", () => {
+    expect(replyPolicy("regulatory", { orderRecorded: true }).mustEscalate).toBe(true)
+  })
+
   it("escalates regulatory questions instead of answering them", () => {
     const decision = replyPolicy("regulatory")
     expect(decision.mustEscalate).toBe(true)

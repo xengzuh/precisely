@@ -209,6 +209,9 @@ begin
     (v_org, 'upsert_customer',          'approve', null),
     (v_org, 'create_sales_order',       'auto',    5000),
     (v_org, 'update_sales_order_lines', 'auto',    5000),
+    -- Taking an order over chat writes a draft only, so it runs unattended.
+    -- The threshold is the brake: past it, a person sees the order first.
+    (v_org, 'record_customer_order',    'auto',    5000),
     (v_org, 'confirm_sales_order',      'approve', null),
     (v_org, 'allocate_sales_order',     'approve', null),
     (v_org, 'fulfil_sales_order',       'approve', null),

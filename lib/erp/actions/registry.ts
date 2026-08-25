@@ -1,5 +1,6 @@
 import {
   discardCustomerMessage,
+  recordCustomerOrder,
   sendCustomerMessage,
 } from "./definitions/conversations"
 import { importProducts } from "./definitions/imports"
@@ -62,6 +63,7 @@ const ACTIONS = [
   // Conversations
   sendCustomerMessage,
   discardCustomerMessage,
+  recordCustomerOrder,
   // Purchasing
   createPurchaseOrder,
   receivePurchaseOrder,

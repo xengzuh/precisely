@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { isoDate, uomSchema as uom } from "@/lib/erp/schema"
+import { searchTerms } from "@/lib/erp/search"
 import { defineAction } from "../define"
 import { ActionError, type ActionContext } from "../types"
 
@@ -294,20 +295,31 @@ export const searchProducts = defineAction({
   risk: () => "low",
   summarize: (i) => `Search catalog for "${i.query}"`,
   async execute(ctx, input) {
-    const pattern = `%${input.query.replace(/[%_]/g, "")}%`
+    const terms = searchTerms(input.query)
+    // No usable term is no match. Running the query anyway would drop every
+    // condition and hand back the whole catalog as if it had all matched.
+    if (terms.length === 0) return { matches: [] }
 
     // Must be a single string literal: Supabase infers the result shape from
     // the literal type, and concatenation widens it to `string`, which drops
     // the inference entirely.
-    const { data, error } = await ctx.db
+    let query = ctx.db
       .from("products")
       .select(
         "id, sku, name, grade, concentration_pct, base_uom, density_kg_per_l, list_price, qty_on_hand, qty_reserved, is_batch_tracked, package_types(id, name, qty_per_package, uom), batches(id, lot_code, expiry_date, qty_on_hand, qty_reserved)"
       )
       .eq("org_id", ctx.orgId)
       .eq("is_active", true)
-      .or(`name.ilike.${pattern},sku.ilike.${pattern},grade.ilike.${pattern}`)
-      .limit(input.limit)
+
+    // One `.or()` per term, and PostgREST ANDs the groups together: every term
+    // has to appear in the name, SKU, or grade. That is what lets "IPA 99%"
+    // reach `SOL-IPA-99 / Isopropyl Alcohol 99%`, which no whole-phrase match
+    // on any single column ever does.
+    for (const term of terms) {
+      query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,grade.ilike.%${term}%`)
+    }
+
+    const { data, error } = await query.limit(input.limit)
 
     if (error) throw new ActionError(error.message, "execution_failed")
 

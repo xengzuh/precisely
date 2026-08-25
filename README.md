@@ -131,6 +131,35 @@ figure — and a wrong price is an invoice someone has to retract.
 per-customer alias and resolved deterministically on future documents — before the model runs.
 Repeat orders, which are most of a distributor's volume, converge on needing no model call at all.
 
+**The WhatsApp assistant** answers customers directly, and takes their orders. It is a tool loop
+over the same registry — it reads the live catalog through `search_products` rather than from
+anything baked into a prompt, so it cannot describe stock that isn't there.
+
+How much it may say on its own is decided by what the sentence *commits the business to*, not by how
+confident the model sounds:
+
+| The customer asked | It answers | Why |
+|---|---|---|
+| What do you stock? Is it in? | unattended | A fact, read live at the moment of asking |
+| How much is it? When can I get it? | drafts for a person | A price is an offer; a date is a promise |
+| Anything about hazards or handling | escalates, never answers | Legal and safety liability. A person answers, citing the SDS |
+| I'd like to order X | unattended, *once the order is on record* | See below |
+
+That last row is the interesting one. An order reply is a supply commitment right up until the
+order actually exists — after which it's a receipt for a row a colleague is about to confirm, which
+is the same class of statement as an availability answer. So the exemption turns on a database
+write having happened, never on the model reporting that it did.
+
+What the assistant writes is a **draft** sales order. Confirming, pricing, allocating stock, and
+shipping stay separate actions that a person performs. Two mistakes are ruled out by the schema
+rather than by instructions: there is no price field on the tool, so a price can only come from the
+catalog; and there is no way to pass a converted quantity, so *"three drums"* stays three drums until
+`resolveToBase` turns it into 600 L. The model never does the arithmetic that decides how much
+leaves the warehouse.
+
+An unrecognised number simply isn't offered the tool. Withholding the capability is stronger than
+granting it and refusing later.
+
 **Agents never author regulatory data.** Hazard class, UN number, packing group, and SDS content
 carry shipping and legal liability. When that layer lands it will be a curated table agents *read
 and cite*, never write. This is enforced structurally: no action exists that writes those fields.

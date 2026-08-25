@@ -117,13 +117,20 @@ export async function POST(request: Request) {
   after(async () => {
     try {
       const ctx = await getAgentContext(orgId, null)
-      await receiveMessage(ctx, {
+      const result = await receiveMessage(ctx, {
         channel: "whatsapp",
         externalId: message.from,
         displayName: message.displayName,
         body: message.body,
         externalMessageId: message.externalId,
       })
+
+      // The 200 went out long before this finished, so the log line is the only
+      // place the outcome of the turn is visible while tailing.
+      console.log(
+        `[whatsapp] reply ${result.status}` +
+          (result.orderId ? `, recorded draft order ${result.orderId}` : "")
+      )
     } catch (err) {
       // Nothing to return a status to any more — the reply already went out.
       // The failure surfaces in the agent_runs ledger and the review inbox.

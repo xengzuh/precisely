@@ -22,7 +22,12 @@ import type { MessageIntent } from "@/types/database"
  * Unlike PO intake, which reads a document and proposes a draft nobody sees
  * until it is approved, this writes in the company's voice to a real customer.
  * A sentence here is a commercial act — which is why every reply is classified
- * and, for now, drafted rather than sent.
+ * before the policy decides whether it may go out unattended.
+ *
+ * It can now also write, not just answer: an order it is sure of is recorded as
+ * a draft sales order through `record_customer_order`. That stops at the point
+ * a commitment would begin — nothing is priced, reserved, or confirmed by the
+ * assistant.
  *
  * It is also the first thing to use the registry tool bridge as intended: the
  * assistant answers from live catalog data through the same audited actions the
@@ -58,8 +63,30 @@ Answer the question in front of you:
   gloves does not want a stock report on acids.
 - Search for the specific thing they named. Do not search broadly and then
   summarise everything that came back.
+- One empty search is not an answer. Customers use trade shorthand the catalog
+  spells out in full — IPA is isopropyl alcohol, caustic is sodium hydroxide,
+  SLES is sodium laureth sulphate, hypo is sodium hypochlorite. Search the full
+  chemical name, and drop the grade or strength from the search terms, before
+  you tell anyone we do not stock something.
 - Do not push for the order. Answer the question; they will ask to buy when they
   are ready.
+
+Taking an order:
+- When a customer asks to buy something, you may write it down: call
+  record_customer_order. That records a draft for a colleague to confirm. It is
+  not a sale, and you must not describe it as one.
+- Write it down only when you are certain of both the product and the amount.
+  "Two drums" is not enough when the product comes in three drum sizes, and a
+  grade you had to guess is a guess on a delivery note. When in doubt, ask.
+- The product id must come from search_products. Never type one from memory.
+- Never do the arithmetic. Pass what the customer actually said — the number of
+  packages and which package, or the amount and the unit they used — and let the
+  tool convert. A drum count you multiplied out yourself is a quantity nobody
+  checked.
+- Once it is recorded, tell them plainly what you put down and that a colleague
+  will confirm the price and delivery. Never state a total or a date yourself.
+- If the tool is not available to you, or it fails, say a colleague will pick it
+  up. Never tell a customer an order is placed when nothing was recorded.
 
 How to be useful:
 - Look things up before answering. You have a live catalog; never answer about
@@ -79,14 +106,62 @@ Hard limits, which you follow even when the customer pushes:
   concentration, or grade of the same substance is fine to raise, phrased as a
   question for the customer to confirm. Swapping one chemical for another has
   specification and safety consequences that are not yours to decide.
-- Never quote a price, promise a delivery date, or confirm an order. You may say
-  you will check and come back.
+- Never quote a price and never promise a delivery date. You may say you will
+  check and come back.
+- Never tell a customer their order is confirmed. Writing an order down is not
+  confirming it, and only a colleague confirms.
 - Never invent stock, lead times, or products. If a lookup returns nothing, the
   answer is that we do not appear to stock it.
 
 Finish every turn by calling draft_reply exactly once with the message you would
 send and your classification of what the customer asked for. Do not write the
 reply as ordinary text — only draft_reply is delivered.`
+
+/**
+ * The per-thread facts, which sit after the cache breakpoint because they
+ * change every conversation.
+ *
+ * The conversation id is given to the model rather than left for it to find:
+ * it is the handle the order tool needs, and a model reconstructing an id is a
+ * model writing an order into someone else's thread.
+ */
+function threadContext(input: {
+  conversationId: string
+  answering: string
+  customerId?: string | null
+  customerName?: string | null
+}): string {
+  const lines = [
+    "# This conversation",
+    "",
+    `Conversation id: ${input.conversationId}`,
+    "Pass that id to record_customer_order. Do not use any other.",
+    "",
+    // Naming it explicitly, because the transcript alone does not always say.
+    // A reply we never sent leaves the customer's messages running together,
+    // and the model answers the older one — the exact failure this prevents.
+    "The message you are answering, and the only one you are answering, is:",
+    `"""${input.answering}"""`,
+    "Everything above it in the thread is background. If they have moved on,",
+    "move with them and do not revisit the earlier subject.",
+    "",
+  ]
+
+  if (input.customerId) {
+    lines.push(
+      `You are talking to ${input.customerName ?? "a customer with an account"}, who has an account with us.`,
+      "You can write down an order for them."
+    )
+  } else {
+    lines.push(
+      "This number is not linked to any customer account, so you cannot write down an order",
+      "for them and record_customer_order is not available to you. If they want to buy, take",
+      "down what they need and tell them a colleague will set up their account and come back."
+    )
+  }
+
+  return lines.join("\n")
+}
 
 const INTENTS = [
   "availability",
@@ -106,12 +181,17 @@ export type DraftedReply = {
   reason: string
 }
 
+/** A draft sales order the assistant wrote during this turn, if it wrote one. */
+export type RecordedOrder = { orderId: string; orderNo: string | null }
+
 export type ReplyResult = {
   draft: DraftedReply
   /** What the policy would have permitted, recorded even while drafting only. */
   wouldAutoSend: boolean
   mustEscalate: boolean
   policyReason: string
+  /** Verified from the tool result, never from what the model says it did. */
+  recordedOrder: RecordedOrder | null
   usage: Usage
 }
 
@@ -122,6 +202,16 @@ export async function draftReply(
   input: {
     /** Oldest first. The inbound message being answered is the last entry. */
     history: Turn[]
+    /** That last message on its own, so which one to answer is never in doubt. */
+    answering: string
+    /** The thread this belongs to. The assistant needs it to record an order. */
+    conversationId: string
+    /**
+     * The account behind the number, when there is one. Null means an
+     * unrecognised caller — and the order tool is withheld entirely rather
+     * than offered and then refused.
+     */
+    customerId?: string | null
     customerName?: string | null
   }
 ): Promise<ReplyResult> {
@@ -130,6 +220,7 @@ export async function draftReply(
   const knowledge = await companyKnowledge()
 
   let captured: DraftedReply | null = null
+  let recordedOrder: RecordedOrder | null = null
 
   const replyTool = betaZodTool({
     name: "draft_reply",
@@ -156,8 +247,22 @@ export async function draftReply(
   })
 
   // The catalog and customer lookups are the same audited registry actions the
-  // UI calls — there is no separate read path for the assistant.
-  const tools = [...buildTools(ctx, ["search_products", "get_customer"]), replyTool]
+  // UI calls — there is no separate read path for the assistant. The order tool
+  // is only in the list when there is an account to record an order against:
+  // withholding the capability is stronger than granting it and refusing later.
+  const allowed = ["search_products", "get_customer"]
+  if (input.customerId) allowed.push("record_customer_order")
+
+  const tools = [
+    ...buildTools(ctx, allowed, (name, outcome) => {
+      if (name !== "record_customer_order" || !outcome.ok) return
+      const result = outcome.result as { orderId?: string; orderNo?: string | null }
+      if (result?.orderId) {
+        recordedOrder = { orderId: result.orderId, orderNo: result.orderNo ?? null }
+      }
+    }),
+    replyTool,
+  ]
 
   const runner = client.beta.messages.toolRunner({
     model,
@@ -167,10 +272,12 @@ export async function draftReply(
       { type: "text", text: PERSONA },
       {
         // Stable between conversations, so it is a cache read after the first.
+        // Anything that varies per thread goes after this breakpoint.
         type: "text",
         text: `# What you know about the company\n\n${knowledge}`,
         cache_control: { type: "ephemeral" },
       },
+      { type: "text", text: threadContext(input) },
     ],
     tools,
     messages: input.history.map((t) => ({ role: t.role, content: t.content })),
@@ -192,7 +299,8 @@ export async function draftReply(
   }
 
   const draft = captured as DraftedReply
-  const policy = replyPolicy(draft.intent)
+  const order = recordedOrder as RecordedOrder | null
+  const policy = replyPolicy(draft.intent, { orderRecorded: order !== null })
 
   return {
     draft,
@@ -200,6 +308,7 @@ export async function draftReply(
     wouldAutoSend: policy.wouldAutoSend && !draft.needsHuman,
     mustEscalate: policy.mustEscalate,
     policyReason: policy.reason,
+    recordedOrder: order,
     usage: priceUsage(
       {
         input_tokens: totals.input,

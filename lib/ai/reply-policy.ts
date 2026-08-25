@@ -61,9 +61,40 @@ const POLICY: Record<MessageIntent, ReplyDecision> = {
   },
 }
 
-export function replyPolicy(intent: MessageIntent | null): ReplyDecision {
+/**
+ * Things the system has verified about this turn, as opposed to things the
+ * model said about it. Only facts belong here.
+ */
+export type ReplyFacts = {
+  /** A draft sales order was actually written, and its id is on record. */
+  orderRecorded?: boolean
+}
+
+export function replyPolicy(
+  intent: MessageIntent | null,
+  facts: ReplyFacts = {}
+): ReplyDecision {
   // An unclassified message is the same risk as an unrecognised one.
-  return intent ? POLICY[intent] : POLICY.other
+  const base = intent ? POLICY[intent] : POLICY.other
+
+  // An order reply changes class once the order exists. Before, the assistant
+  // would be committing the business to supply something; after, it is
+  // acknowledging a row a colleague is about to confirm — the same kind of
+  // statement as an availability answer, and verifiably true.
+  //
+  // This turns on a database write having happened, never on the model saying
+  // it did. When the order was not recorded — an unknown number, a product it
+  // could not pin down — the reply is improvisation about a commercial
+  // request, and that still waits for a person.
+  if (intent === "order" && facts.orderRecorded) {
+    return {
+      wouldAutoSend: true,
+      mustEscalate: false,
+      reason: "The order is recorded as a draft, so the reply is a receipt rather than a promise",
+    }
+  }
+
+  return base
 }
 
 /**

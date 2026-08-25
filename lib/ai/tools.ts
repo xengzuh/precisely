@@ -17,7 +17,7 @@ import { ActionError, type ActionContext, type AnyActionDefinition } from "@/lib
  * reasoning, instead of being handed a silent failure it might retry.
  */
 
-type ToolResult =
+export type ToolResult =
   | { ok: true; result: unknown }
   | { ok: false; status: "pending_approval"; summary: string; actionId: string }
   | { ok: false; status: "error"; error: string }
@@ -65,8 +65,16 @@ async function invokeAction(
  *
  * `ctx` is captured per run so a tool call can never execute against a
  * different organization than the run it belongs to.
+ *
+ * `observe` is called with the outcome of every tool call. A caller that has
+ * to know what actually happened — as opposed to what the model later claims
+ * happened — reads it from here rather than from the transcript.
  */
-export function buildTools(ctx: ActionContext, only?: string[]) {
+export function buildTools(
+  ctx: ActionContext,
+  only?: string[],
+  observe?: (name: string, outcome: ToolResult) => void
+) {
   const definitions = getAgentTools().filter((d) => !only || only.includes(d.name))
 
   return definitions.map((definition) =>
@@ -76,6 +84,7 @@ export function buildTools(ctx: ActionContext, only?: string[]) {
       inputSchema: definition.schema as z.ZodObject<z.ZodRawShape>,
       run: async (input: unknown) => {
         const result = await invokeAction(definition, ctx, input)
+        observe?.(definition.name, result)
         return JSON.stringify(result)
       },
     })
