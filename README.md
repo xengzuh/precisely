@@ -1,12 +1,15 @@
 # Chemical Distribution ERP
 
-An ERP for small and mid-sized chemical distributors, built so that AI agents can operate it —
-answering customers on WhatsApp, taking their orders, reading emailed purchase orders, and managing
-stock — without ever getting a code path a human user could not reach.
+Inventory and order management for small chemical distributors, with a **WhatsApp assistant that
+answers customers and takes their orders** — replying in seconds, reading live stock, and writing
+the order into the system without anyone re-typing it.
 
-**Status:** in active development, deployed on Vercel. Complete through order-to-cash, with a
-document intake agent and a WhatsApp assistant that answers customers and records their orders
-unattended. Not yet in use by a real distributor.
+The AI is not bolted on. It operates the app through the same typed, audited path a person uses,
+and never gets a code path of its own.
+
+**Status:** in active development, deployed on Vercel. Stock, orders, and invoicing work end to
+end; the WhatsApp assistant answers and records orders unattended. Not yet in use by a real
+distributor. Accounting and logistics are the intended direction, not a current claim.
 
 ```
 Next.js 16 · TypeScript (strict) · Supabase (Postgres + RLS) · Tailwind v4 · shadcn/ui · Anthropic API

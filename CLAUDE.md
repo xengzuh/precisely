@@ -1,9 +1,14 @@
-# CLAUDE.md — AI-native ERP for chemical distribution
+# CLAUDE.md — inventory and orders for chemical distribution, run by AI agents
 
-An ERP for small-to-medium chemical distributors, being built so that AI agents
-can operate it: taking purchase orders from emailed documents, raising invoices,
-and managing stock. The agent layer is not bolted on — the same typed action
-registry backs both the UI and the agents.
+Inventory and order management for small-to-medium chemical distributors, being
+built so that AI agents can operate it: answering customers on WhatsApp and
+taking their orders, reading purchase orders out of emailed documents, raising
+invoices, and managing stock. The agent layer is not bolted on — the same typed
+action registry backs both the UI and the agents.
+
+Call it an ERP only where the scope justifies it. Today that scope is stock,
+sell-side orders, invoicing, and purchasing. Accounting and logistics are the
+intended direction, not something the code does.
 
 ## Stack (strict — do not deviate)
 
