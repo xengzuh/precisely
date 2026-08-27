@@ -26,6 +26,9 @@ export async function startRun(input: {
       agent: input.agent,
       trigger: input.trigger,
       status: "running",
+      // A placeholder. The row has to exist before the call is made, and which
+      // model serves it is a per-task decision made inside the agent —
+      // `finishRun` overwrites this with what actually ran.
       model: MODEL,
       input_ref: input.inputRef ?? null,
     })
@@ -48,6 +51,11 @@ export async function finishRun(input: {
     .from("agent_runs")
     .update({
       status: input.error ? "failed" : "succeeded",
+      // The chat and extraction agents run on different tiers, so the default
+      // recorded at the start is only right by coincidence. Costs here are
+      // already priced off the real model; the label has to match them, or the
+      // ledger says Sonnet while the arithmetic says Haiku.
+      ...(input.usage?.model ? { model: input.usage.model } : {}),
       tokens_in: input.usage?.inputTokens ?? 0,
       tokens_out: input.usage?.outputTokens ?? 0,
       cache_read_tokens: input.usage?.cacheReadTokens ?? 0,

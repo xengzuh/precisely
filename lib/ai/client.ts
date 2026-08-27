@@ -132,6 +132,8 @@ export function assertNotRefused(response: {
 
 /** What an agent run cost, for the agent_runs ledger. */
 export type Usage = {
+  /** The model that actually served the call, not the configured default. */
+  model: string
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -186,6 +188,7 @@ export function priceUsage(
     1_000_000
 
   return {
+    model,
     // input_tokens excludes cached tokens; report the true prompt size.
     inputTokens: usage.input_tokens + cacheRead + cacheWrite,
     outputTokens: usage.output_tokens,
