@@ -1,15 +1,16 @@
 # Chemical Distribution ERP
 
 An ERP for small and mid-sized chemical distributors, built so that AI agents can operate it —
-reading emailed purchase orders, drafting sales orders, and managing stock — without ever getting
-a code path a human user could not reach.
+answering customers on WhatsApp, taking their orders, reading emailed purchase orders, and managing
+stock — without ever getting a code path a human user could not reach.
 
-**Status:** in active development. Feature-complete through order-to-cash and a working document
-intake agent; not deployed and not in production use.
+**Status:** in active development, deployed on Vercel. Complete through order-to-cash, with a
+document intake agent and a WhatsApp assistant that answers customers and records their orders
+unattended. Not yet in use by a real distributor.
 
 ```
 Next.js 16 · TypeScript (strict) · Supabase (Postgres + RLS) · Tailwind v4 · shadcn/ui · Anthropic API
-20 tables · 12 Postgres functions · 22 registry actions · 28 routes · 77 tests
+22 tables · 16 Postgres functions · 25 registry actions · 31 routes · 135 tests
 ```
 
 ---
@@ -180,9 +181,17 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=     # server-only — never NEXT_PUBLIC_
 ANTHROPIC_API_KEY=             # server-only
+AGENT_ORG_ID=                  # which org unattended agent work belongs to
+WHATSAPP_PHONE_NUMBER_ID=      # optional, enables the WhatsApp assistant
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_APP_SECRET=
+WHATSAPP_VERIFY_TOKEN=
 INBOUND_WEBHOOK_SECRET=        # optional, enables the email webhook
-INBOUND_ORG_ID=
 ```
+
+`AGENT_ORG_ID` is not a convenience. Webhook-triggered runs have no user session and use the
+service role, so an org id taken from the request body would let any sender write into any tenant
+they can name.
 
 In the Supabase SQL editor, run in order:
 
@@ -214,6 +223,25 @@ node scripts/send-inbound-email.mjs --message-id "<seen@before>"   # dedup
 node scripts/send-inbound-email.mjs --bad-signature                # expect 401
 ```
 
+### Trying the WhatsApp assistant
+
+No Meta account needed. `POST /api/dev/chat` runs a message through the whole path — catalog
+lookups, the reply policy, order recording — and returns what happened. It is dev-only, gated in
+`proxy.ts`.
+
+```bash
+curl -X POST localhost:3000/api/dev/chat -H 'content-type: application/json' \
+  -d '{"from":"60123456789","message":"Can I order 3 drums of IPA 99%?"}'
+```
+
+```json
+{ "status": "sent", "orderId": "80dd4567-…", "conversationId": "55a6626c-…" }
+```
+
+That number belongs to a seeded customer, so it resolves to an account and the order tool is
+offered. Change it to an unknown number and the assistant declines to record anything — the tool is
+withheld rather than offered and refused.
+
 ---
 
 ## Testing
@@ -224,13 +252,16 @@ npm run typecheck   # tsc --noEmit, zero errors
 npm run lint
 ```
 
-77 tests, covering the places where a silently wrong answer ships as a wrong quantity of a chemical:
-unit conversion and the missing-density error, package expansion, price resolution, quoted-reply
-stripping, and the autonomy gate that decides whether an agent acts alone. No database or network —
-these are pure functions by design.
+135 tests, covering the places where a silently wrong answer ships as a wrong quantity of a chemical:
+unit conversion and the missing-density error, package expansion, price resolution, webhook signature
+verification, catalog search term splitting, and the two gates that decide whether an agent acts
+alone — the autonomy policy and the reply policy. No database or network — these are pure functions
+by design.
 
-The email tests earned their place immediately: they caught a regex that required every quoted line
-to end in a newline, so the final line of a reply chain never matched and nothing was stripped.
+They earn their place. The email tests caught a regex that required every quoted line to end in a
+newline, so the final line of a reply chain never matched and nothing was stripped. The reply-policy
+tests pin down something easier to get wrong: that recording an order unlocks the order reply and
+nothing else, and can never downgrade a regulatory escalation.
 
 ---
 
@@ -243,19 +274,25 @@ Honest list of what isn't done:
 - **Customer-specific pricing.** Everyone gets list price. Real distributors run negotiated rates.
 - **No delete-line action.** An order containing something you genuinely don't stock can't proceed.
 - **Regulatory layer.** CAS/UN/GHS/SDS deferred; the schema leaves room for it.
-- **Not deployed**, and the invoice PDF lacks the seller's registration details a Malaysian SST
-  invoice legally requires.
+- **The invoice PDF** lacks the seller's registration details a Malaysian SST invoice legally
+  requires.
+- **The WhatsApp assistant is unproven on real traffic.** It has been exercised end to end against
+  the live Cloud API, but a customer-facing model is only really tested by customers, and the split
+  between what it may say and what it must hand over will move once it meets them.
 
 ---
 
 ## Layout
 
 ```
-app/(dashboard)/        inbox, agents, customers, orders, invoices,
+app/(dashboard)/        inbox, conversations, agents, customers, orders, invoices,
                         inventory, suppliers, purchase-orders, reports, settings
+app/api/whatsapp/       the Cloud API webhook — verifies, acknowledges, then answers
 lib/erp/actions/        the action registry — the only write path
-lib/erp/                uom, pricing, aliases, email parsing, queries
-lib/ai/                 Anthropic client, registry→tool bridge, PO intake agent
+lib/erp/                uom, pricing, aliases, search, phone, email parsing, queries
+lib/ai/                 Anthropic client, registry→tool bridge, the two agents
+lib/whatsapp/           Meta and Twilio transports behind one interface
+content/company.md      what the assistant knows about the business, in prose
 supabase/               schema, atomic functions, seed, reset
 proxy.ts                Next 16's renamed middleware — session refresh + auth
 ```

@@ -12,7 +12,7 @@
  *   node scripts/send-inbound-email.mjs --message-id "<abc@acme.com>"   # replay, to test dedup
  *   node scripts/send-inbound-email.mjs --bad-signature                 # expect 401
  *
- * Requires the dev server running and INBOUND_WEBHOOK_SECRET + INBOUND_ORG_ID
+ * Requires the dev server running and INBOUND_WEBHOOK_SECRET + AGENT_ORG_ID
  * set in .env.local.
  */
 
@@ -97,9 +97,9 @@ if (!secret) {
       randomUUID()
   )
 }
-if (!(process.env.INBOUND_ORG_ID || env.INBOUND_ORG_ID)) {
+if (!(process.env.AGENT_ORG_ID || env.AGENT_ORG_ID)) {
   console.warn(
-    "  Warning: INBOUND_ORG_ID is not set in .env.local — the webhook will answer 501.\n" +
+    "  Warning: AGENT_ORG_ID is not set in .env.local — the webhook will answer 501.\n" +
       "  Set it to your organization's id:  select id from organizations;\n"
   )
 }
