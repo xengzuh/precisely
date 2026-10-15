@@ -203,17 +203,32 @@ export async function receiveMessage(
           }
         )
 
-        // Four separate conditions have to hold before the assistant answers a
+        // Three separate conditions have to hold before the assistant answers a
         // customer unattended. Each one is a different way this could go wrong,
         // so none of them is folded into another.
         const autoReplyOn = await autoReplyEnabled(ctx)
         const provider = getWhatsAppProvider()
-        const windowOpen =
-          conversation.window_expires_at === null ||
-          new Date(conversation.window_expires_at) > new Date()
 
-        const shouldSend =
-          reply.wouldAutoSend && autoReplyOn && provider !== null && windowOpen
+        const shouldSend = reply.wouldAutoSend && autoReplyOn && provider !== null
+
+        // There is deliberately no 24-hour-window check here.
+        //
+        // WhatsApp measures that window from the customer's most recent
+        // message, and the message being answered *is* that message — it was
+        // received seconds ago, in this request. Receiving it is what opens the
+        // window.
+        //
+        // This used to read `conversation.window_expires_at`, which is loaded
+        // before the row is refreshed above and therefore describes the
+        // *previous* window. For anyone who had been quiet for more than a day
+        // that value had lapsed, so their first message got a draft instead of
+        // an answer — silently, with no error recorded, because the send was
+        // never attempted. A returning customer after a quiet week is exactly
+        // who this is for.
+        //
+        // The check still matters in `send_customer_message`, where a person
+        // approves a draft hours after it was written and the window really can
+        // have closed in between. It is right there and wrong here.
 
         let status: "drafted" | "sent" = "drafted"
         let externalId: string | null = null
